@@ -1,0 +1,54 @@
+{
+  "name": "mcp-hetzner-dns",
+  "version": "0.1.0",
+  "description": "Model Context Protocol (MCP) server for managing DNS zones and records via the Hetzner Cloud API",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "hetzner",
+    "hetzner-cloud",
+    "dns"
+  ],
+  "license": "MIT",
+  "author": "Willi Thiel",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ni-c/mcp-hetzner-dns.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ni-c/mcp-hetzner-dns/issues"
+  },
+  "homepage": "https://github.com/ni-c/mcp-hetzner-dns#readme",
+  "type": "module",
+  "bin": {
+    "mcp-hetzner-dns": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.30.0",
+    "prettier": "^3.6.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.35.0",
+    "vitest": "^3.2.0"
+  }
+}
