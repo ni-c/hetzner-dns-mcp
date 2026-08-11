@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Release workflow: pushing a `vX.Y.Z` tag runs the tests, publishes to npm
+  via Trusted Publishing (OIDC, with provenance) and creates a GitHub release
+  with the notes from this changelog.
+- CI: test matrix extended to Node 24, coverage report (thresholds enforced,
+  uploaded as artifact), weekly `npm audit` job, Dependabot for npm packages
+  and pinned GitHub Actions.
+
 ## [0.2.0] - 2026-08-11
 
 ### Changed

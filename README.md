@@ -125,6 +125,16 @@ npm test          # run the vitest test suite
 npm run lint      # eslint + prettier check
 ```
 
+### Releasing
+
+1. Bump the version in `package.json` (`npm version X.Y.Z --no-git-tag-version`).
+2. Rename the `[Unreleased]` section in `CHANGELOG.md` to the new version.
+3. Commit, then tag and push: `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin main vX.Y.Z`.
+
+The release workflow then runs the tests, publishes to npm via
+[Trusted Publishing](https://docs.npmjs.com/trusted-publishers) (with
+provenance) and creates a GitHub release with the notes from the CHANGELOG.
+
 ## License
 
 [MIT](LICENSE)
