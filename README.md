@@ -139,7 +139,10 @@ npm run lint      # eslint + prettier check
 
 The release workflow then runs the tests, publishes to npm via
 [Trusted Publishing](https://docs.npmjs.com/trusted-publishers) (with
-provenance) and creates a GitHub release with the notes from the CHANGELOG.
+provenance), creates a GitHub release with the notes from the CHANGELOG and
+updates the entry in the official
+[MCP Registry](https://registry.modelcontextprotocol.io)
+(`io.github.ni-c/hetzner-dns-mcp`, via GitHub OIDC).
 
 ## License
 
