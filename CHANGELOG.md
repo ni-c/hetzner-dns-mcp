@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Dev dependencies updated: vitest 4 (+ matching `@vitest/coverage-v8`),
+  ESLint 10, `@types/node` 26; GitHub Actions pins bumped to current
+  major versions. Coverage thresholds rebased to vitest 4's stricter
+  AST-based measurement.
+
 ## [0.2.1] - 2026-08-11
 
 ### Added

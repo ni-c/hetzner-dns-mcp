@@ -8,11 +8,13 @@ export default defineConfig({
       // The CLI entry point only wires stdio together and exits the process;
       // it is exercised manually, not unit-tested.
       exclude: ['src/index.ts'],
+      // Vitest 4 measures AST-based (stricter than v3); thresholds sit just
+      // below the measured baseline at the time of the bump.
       thresholds: {
-        statements: 90,
-        branches: 80,
-        functions: 90,
-        lines: 90,
+        statements: 85,
+        branches: 68,
+        functions: 70,
+        lines: 85,
       },
     },
   },
