@@ -20,14 +20,25 @@ export const RRSET_TYPES = [
   'TXT',
 ] as const;
 
+// The negative lookahead rejects "." and ".." — encodeURIComponent leaves dots
+// untouched, so a bare dot segment would be normalized away by the URL parser
+// and escape the intended API path.
 export const zone = z
   .string()
   .min(1)
+  .regex(
+    /^(?!\.\.?$)[A-Za-z0-9._-]+$/,
+    'must be a zone ID or domain name (letters, digits, ".", "-", "_")'
+  )
   .describe('ID or name of the zone, e.g. "example.com"');
 
 export const rrsetName = z
   .string()
   .min(1)
+  .regex(
+    /^(?!\.\.?$)[A-Za-z0-9@*._-]+$/,
+    'must be an RRSet name (letters, digits, ".", "-", "_", "*", or "@")'
+  )
   .describe(
     'Name of the RRSet, relative to the zone and in lower case, e.g. "www" or "@" for the zone apex'
   );
@@ -78,5 +89,5 @@ export const perPage = z
 
 /** Builds the URL path segment for an RRSet, e.g. `/www/A`. */
 export function rrsetPath(name: string, type: string): string {
-  return `/${encodeURIComponent(name)}/${type}`;
+  return `/${encodeURIComponent(name)}/${encodeURIComponent(type)}`;
 }

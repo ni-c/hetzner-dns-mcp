@@ -101,6 +101,12 @@ describe('tool registration', () => {
       true
     );
     expect(byName.get('set_records')?.annotations?.destructiveHint).toBe(true);
+    expect(byName.get('remove_records')?.annotations?.destructiveHint).toBe(
+      true
+    );
+    expect(
+      byName.get('change_primary_nameservers')?.annotations?.destructiveHint
+    ).toBe(true);
     expect(byName.get('list_zones')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('export_zonefile')?.annotations?.readOnlyHint).toBe(true);
   });
@@ -192,6 +198,7 @@ describe('set_records', () => {
         name: '@',
         type: 'TXT',
         records: [{ value: '"v=spf1 -all"' }],
+        confirm: true,
       },
     });
 
@@ -201,6 +208,146 @@ describe('set_records', () => {
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
       records: [{ value: '"v=spf1 -all"' }],
     });
+  });
+
+  it('refuses without confirm and reports the current contents', async () => {
+    const rrset = {
+      rrset: { name: 'www', type: 'A', records: [{ value: '198.51.100.1' }] },
+    };
+    const calls = stubFetch(() => jsonResponse(rrset));
+    const client = await connectClient();
+
+    const result = (await client.callTool({
+      name: 'set_records',
+      arguments: {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '198.51.100.2' }],
+      },
+    })) as CallToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain('198.51.100.1');
+    expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
+  });
+});
+
+describe('remove_records', () => {
+  it('refuses without confirm and reports the current contents', async () => {
+    const rrset = {
+      rrset: { name: 'www', type: 'A', records: [{ value: '198.51.100.1' }] },
+    };
+    const calls = stubFetch(() => jsonResponse(rrset));
+    const client = await connectClient();
+
+    const result = (await client.callTool({
+      name: 'remove_records',
+      arguments: {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '198.51.100.1' }],
+      },
+    })) as CallToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain('198.51.100.1');
+    expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
+  });
+
+  it('removes with confirm=true', async () => {
+    const calls = stubFetch(() => jsonResponse({ action: {} }, 201));
+    const client = await connectClient();
+
+    await client.callTool({
+      name: 'remove_records',
+      arguments: {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '198.51.100.1' }],
+        confirm: true,
+      },
+    });
+
+    expect(calls[0]?.url).toBe(
+      'https://api.hetzner.test/v1/zones/example.com/rrsets/www/A/actions/remove_records'
+    );
+  });
+});
+
+describe('change_primary_nameservers', () => {
+  it('refuses without confirm and reports the current primaries', async () => {
+    const calls = stubFetch(() =>
+      jsonResponse({
+        zone: {
+          id: 1,
+          name: 'example.com',
+          primary_nameservers: [{ address: '198.51.100.53', port: 53 }],
+        },
+      })
+    );
+    const client = await connectClient();
+
+    const result = (await client.callTool({
+      name: 'change_primary_nameservers',
+      arguments: {
+        zone: 'example.com',
+        primary_nameservers: [{ address: '198.51.100.54' }],
+      },
+    })) as CallToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain('198.51.100.53:53');
+    expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
+  });
+
+  it('changes with confirm=true', async () => {
+    const calls = stubFetch(() => jsonResponse({ action: {} }, 201));
+    const client = await connectClient();
+
+    await client.callTool({
+      name: 'change_primary_nameservers',
+      arguments: {
+        zone: 'example.com',
+        primary_nameservers: [{ address: '198.51.100.54' }],
+        confirm: true,
+      },
+    });
+
+    const post = calls.find((c) => c.init?.method === 'POST');
+    expect(post?.url).toBe(
+      'https://api.hetzner.test/v1/zones/example.com/actions/change_primary_nameservers'
+    );
+  });
+});
+
+describe('input validation', () => {
+  it('rejects ".." as zone to prevent URL path traversal', async () => {
+    const calls = stubFetch(() => jsonResponse({}));
+    const client = await connectClient();
+
+    const result = (await client.callTool({
+      name: 'get_zone',
+      arguments: { zone: '..' },
+    })) as CallToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('rejects RRSet names with characters outside the safe set', async () => {
+    const calls = stubFetch(() => jsonResponse({}));
+    const client = await connectClient();
+
+    const result = (await client.callTool({
+      name: 'get_rrset',
+      arguments: { zone: 'example.com', name: 'www/../..', type: 'A' },
+    })) as CallToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
   });
 });
 

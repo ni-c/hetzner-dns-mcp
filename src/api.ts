@@ -43,7 +43,14 @@ export class HetznerApi {
       Authorization: this.authHeader,
       Accept: 'application/json',
     };
-    const init: RequestInit = { method, headers };
+    const init: RequestInit = {
+      method,
+      headers,
+      // The API never redirects; refusing keeps the Bearer header from
+      // being replayed to unexpected targets.
+      redirect: 'error',
+      signal: AbortSignal.timeout(30_000),
+    };
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);

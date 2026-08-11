@@ -1,4 +1,4 @@
-# mcp-hetzner-dns
+# hetzner-dns-mcp
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for managing DNS zones and records via the [Hetzner Cloud API](https://docs.hetzner.cloud/reference/cloud#zones).
 
@@ -27,7 +27,7 @@ Configuration is provided via environment variables:
 ```bash
 claude mcp add hetzner-dns -s user \
   -e HETZNER_API_TOKEN=your-token \
-  -- npx -y mcp-hetzner-dns
+  -- npx -y hetzner-dns-mcp
 ```
 
 ### Claude Desktop
@@ -39,7 +39,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "hetzner-dns": {
       "command": "npx",
-      "args": ["-y", "mcp-hetzner-dns"],
+      "args": ["-y", "hetzner-dns-mcp"],
       "env": {
         "HETZNER_API_TOKEN": "your-token"
       }
@@ -55,18 +55,18 @@ Add to your `~/.codex/config.toml`:
 ```toml
 [mcp_servers.hetzner-dns]
 command = "npx"
-args = ["-y", "mcp-hetzner-dns"]
+args = ["-y", "hetzner-dns-mcp"]
 env = { HETZNER_API_TOKEN = "your-token" }
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/ni-c/mcp-hetzner-dns.git
-cd mcp-hetzner-dns
+git clone https://github.com/ni-c/hetzner-dns-mcp.git
+cd hetzner-dns-mcp
 npm install
 npm run build
-# then use `node /path/to/mcp-hetzner-dns/dist/index.js` as the command
+# then use `node /path/to/hetzner-dns-mcp/dist/index.js` as the command
 ```
 
 ## Tools
@@ -84,7 +84,7 @@ npm run build
 | `import_zonefile`            | Import a BIND zone file (replaces all records) — requires `confirm=true` |
 | `change_zone_ttl`            | Change the default TTL of a zone                                         |
 | `change_zone_protection`     | Enable/disable delete protection                                         |
-| `change_primary_nameservers` | Replace the primary nameservers of a secondary zone                      |
+| `change_primary_nameservers` | Replace the primaries of a secondary zone — requires `confirm=true`      |
 
 ### RRSets (record sets)
 
@@ -95,9 +95,9 @@ npm run build
 | `create_rrset`            | Create a new RRSet with records                                       |
 | `update_rrset`            | Replace the labels of an RRSet                                        |
 | `delete_rrset`            | Permanently delete an RRSet — requires `confirm=true`                 |
-| `set_records`             | Replace **all** records of an RRSet                                   |
+| `set_records`             | Replace **all** records of an RRSet — requires `confirm=true`         |
 | `add_records`             | Add records to an RRSet (creates it if missing)                       |
-| `remove_records`          | Remove specific records from an RRSet                                 |
+| `remove_records`          | Remove specific records from an RRSet — requires `confirm=true`       |
 | `change_rrset_ttl`        | Change the TTL of an RRSet (or reset to the zone default with `null`) |
 | `change_rrset_protection` | Enable/disable change protection                                      |
 
@@ -110,9 +110,10 @@ npm run build
 
 ### Safety
 
-- `delete_zone`, `delete_rrset` and `import_zonefile` refuse to run without an explicit `confirm=true` parameter and report what would be affected, so an MCP client can ask the user for confirmation first.
+- `delete_zone`, `delete_rrset`, `import_zonefile`, `set_records`, `remove_records` and `change_primary_nameservers` refuse to run without an explicit `confirm=true` parameter and report what would be affected, so an MCP client can ask the user for confirmation first. Note that the `confirm` guard is advisory: a model can set `confirm=true` on its own. The actual security boundary is the permission prompt of your MCP host — do not auto-approve destructive tools.
 - Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) so hosts can apply appropriate permission policies.
-- `set_records` and `remove_records` are marked destructive because they drop existing records without a confirmation guard — review their input carefully.
+- `HETZNER_API_BASE_URL` must be an `https` URL (`http` is only accepted for localhost) and must not contain credentials; a warning is printed when a non-default host is configured, because the API token is sent there.
+- TSIG keys passed to `create_zone`/`change_primary_nameservers` become part of the conversation context and client transcripts — treat them as secrets and rotate them if in doubt.
 - Hetzner-side resource protection is honored: protected zones/RRSets return an error with a hint to the corresponding `change_*_protection` tool.
 
 ## Development

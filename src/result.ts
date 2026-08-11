@@ -39,6 +39,6 @@ export async function run(
       return errorResult(`${error.message}\n${error.body}${hint}`);
     }
     const message = error instanceof Error ? error.message : String(error);
-    return errorResult(`mcp-hetzner-dns: ${message}`);
+    return errorResult(`hetzner-dns-mcp: ${message}`);
   }
 }

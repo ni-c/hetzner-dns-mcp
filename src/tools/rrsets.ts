@@ -173,19 +173,41 @@ export function registerRrsetTools(server: McpServer, api: HetznerApi): void {
     {
       title: 'Set records of an RRSet',
       description:
-        'Replace ALL records of an RRSet with the given records. Existing records not listed are removed. Use add_records to append instead.',
-      inputSchema: { zone, name: rrsetName, type: rrsetType, records },
+        'Replace ALL records of an RRSet with the given records. Existing records not listed are removed. Use add_records to append instead. Requires confirm=true.',
+      inputSchema: {
+        zone,
+        name: rrsetName,
+        type: rrsetType,
+        records,
+        confirm: z
+          .boolean()
+          .default(false)
+          .describe(
+            'Must be true to actually replace the records. Ask the user for confirmation first.'
+          ),
+      },
       annotations: { destructiveHint: true },
     },
-    ({ zone, name, type, records }) =>
-      run(async () =>
-        jsonResult(
+    ({ zone, name, type, records, confirm }) =>
+      run(async () => {
+        if (!confirm) {
+          const current = await api.get(
+            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}`
+          );
+          return errorResult(
+            `Refusing to replace the records of RRSet "${name}/${type}" of zone "${zone}" without confirmation. ` +
+              'All existing records not listed will be removed. ' +
+              'Call set_records again with confirm=true after the user confirmed.\n' +
+              `Current contents:\n${JSON.stringify(current, null, 2)}`
+          );
+        }
+        return jsonResult(
           await api.post(
             `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/set_records`,
             { records }
           )
-        )
-      )
+        );
+      })
   );
 
   server.registerTool(
@@ -223,19 +245,41 @@ export function registerRrsetTools(server: McpServer, api: HetznerApi): void {
     {
       title: 'Remove records from an RRSet',
       description:
-        'Remove specific records (matched by value) from an RRSet. Removing the last record deletes the RRSet.',
-      inputSchema: { zone, name: rrsetName, type: rrsetType, records },
+        'Remove specific records (matched by value) from an RRSet. Removing the last record deletes the RRSet. Requires confirm=true.',
+      inputSchema: {
+        zone,
+        name: rrsetName,
+        type: rrsetType,
+        records,
+        confirm: z
+          .boolean()
+          .default(false)
+          .describe(
+            'Must be true to actually remove the records. Ask the user for confirmation first.'
+          ),
+      },
       annotations: { destructiveHint: true },
     },
-    ({ zone, name, type, records }) =>
-      run(async () =>
-        jsonResult(
+    ({ zone, name, type, records, confirm }) =>
+      run(async () => {
+        if (!confirm) {
+          const current = await api.get(
+            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}`
+          );
+          return errorResult(
+            `Refusing to remove records from RRSet "${name}/${type}" of zone "${zone}" without confirmation. ` +
+              'Removing the last record deletes the RRSet. ' +
+              'Call remove_records again with confirm=true after the user confirmed.\n' +
+              `Current contents:\n${JSON.stringify(current, null, 2)}`
+          );
+        }
+        return jsonResult(
           await api.post(
             `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/remove_records`,
             { records }
           )
-        )
-      )
+        );
+      })
   );
 
   server.registerTool(

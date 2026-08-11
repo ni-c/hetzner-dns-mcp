@@ -22,7 +22,7 @@ export function createServer(config: Config): McpServer {
   const api = new HetznerApi(config);
 
   const server = new McpServer({
-    name: 'mcp-hetzner-dns',
+    name: 'hetzner-dns-mcp',
     version: packageVersion(),
   });
 

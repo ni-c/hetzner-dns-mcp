@@ -8,10 +8,11 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const server = createServer(config);
   await server.connect(new StdioServerTransport());
-  console.error(`mcp-hetzner-dns: connected, targeting ${config.baseUrl}`);
+  console.error(`hetzner-dns-mcp: connected, targeting ${config.baseUrl}`);
 }
 
 main().catch((error: unknown) => {
-  console.error('mcp-hetzner-dns: fatal error:', error);
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`hetzner-dns-mcp: fatal error: ${message}`);
   process.exit(1);
 });

@@ -16,7 +16,9 @@ const primaryNameservers = z
       tsig_key: z
         .string()
         .optional()
-        .describe('TSIG key to use for the zone transfer'),
+        .describe(
+          'TSIG key to use for the zone transfer. Treat as a secret — it becomes part of the conversation context.'
+        ),
       tsig_algorithm: z
         .enum(['hmac-md5', 'hmac-sha1', 'hmac-sha256'])
         .optional()
@@ -286,18 +288,46 @@ export function registerZoneTools(server: McpServer, api: HetznerApi): void {
     {
       title: 'Change primary nameservers',
       description:
-        'Replace the primary nameservers of a secondary zone (the servers Hetzner transfers the zone from). Only applicable to zones in secondary mode.',
-      inputSchema: { zone, primary_nameservers: primaryNameservers },
-      annotations: { idempotentHint: true },
+        'Replace the primary nameservers of a secondary zone (the servers Hetzner transfers the zone from). The ENTIRE zone content will be taken from the new primaries on the next transfer. Only applicable to zones in secondary mode. Requires confirm=true.',
+      inputSchema: {
+        zone,
+        primary_nameservers: primaryNameservers,
+        confirm: z
+          .boolean()
+          .default(false)
+          .describe(
+            'Must be true to actually change the primary nameservers. Ask the user for confirmation first.'
+          ),
+      },
+      annotations: { destructiveHint: true },
     },
-    ({ zone, primary_nameservers }) =>
-      run(async () =>
-        jsonResult(
+    ({ zone, primary_nameservers, confirm }) =>
+      run(async () => {
+        if (!confirm) {
+          const response = (await api.get(
+            `/zones/${encodeURIComponent(zone)}`
+          )) as {
+            zone?: {
+              name?: string;
+              primary_nameservers?: { address?: string; port?: number }[];
+            };
+          };
+          const current = (response.zone?.primary_nameservers ?? [])
+            .map((ns) => `${ns.address ?? '?'}:${ns.port ?? 53}`)
+            .join(', ');
+          return errorResult(
+            `Refusing to change the primary nameservers of zone "${response.zone?.name ?? zone}" without confirmation. ` +
+              'The entire zone content will be transferred from the new primaries. ' +
+              `Current primary nameservers: ${current || '(none)'}. ` +
+              'Call change_primary_nameservers again with confirm=true after the user confirmed.'
+          );
+        }
+        return jsonResult(
           await api.post(
             `/zones/${encodeURIComponent(zone)}/actions/change_primary_nameservers`,
             { primary_nameservers }
           )
-        )
-      )
+        );
+      })
   );
 }
