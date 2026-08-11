@@ -1,5 +1,11 @@
 # hetzner-dns-mcp
 
+[![CI](https://img.shields.io/github/actions/workflow/status/ni-c/hetzner-dns-mcp/ci.yml?branch=main&label=CI)](https://github.com/ni-c/hetzner-dns-mcp/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/hetzner-dns-mcp)](https://www.npmjs.com/package/hetzner-dns-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/hetzner-dns-mcp)](https://www.npmjs.com/package/hetzner-dns-mcp)
+[![node](https://img.shields.io/node/v/hetzner-dns-mcp)](https://nodejs.org)
+[![license](https://img.shields.io/npm/l/hetzner-dns-mcp)](LICENSE)
+
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for managing DNS zones and records via the [Hetzner Cloud API](https://docs.hetzner.cloud/reference/cloud#zones).
 
 Lets MCP clients like Claude Code, Claude Desktop or Codex manage your Hetzner DNS: list, create, update and delete zones and RRSets (record sets), import/export zone files, manage protection and TTLs, and track asynchronous zone actions.
