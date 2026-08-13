@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-08-13
+
+### Changed
+
+- zod updated to v4 (the MCP SDK supports `^3.25 || ^4.0`); `z.record()`
+  now uses the explicit two-argument form.
+- Dev dependencies updated: TypeScript 6 (`@types/node` is listed explicitly
+  in the tsconfig `types` field, as TS 6 no longer auto-includes `@types`
+  packages), `@eslint/js` 10 (matching ESLint 10).
+
 ## [0.2.2] - 2026-08-11
 
 ### Added

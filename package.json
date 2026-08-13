@@ -1,6 +1,6 @@
 {
   "name": "hetzner-dns-mcp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "mcpName": "io.github.ni-c/hetzner-dns-mcp",
   "description": "Model Context Protocol (MCP) server for managing DNS zones and records via the Hetzner Cloud API",
   "keywords": [
