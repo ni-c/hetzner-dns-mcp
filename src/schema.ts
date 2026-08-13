@@ -69,7 +69,7 @@ export const ttl = z
   .describe('Time To Live in seconds (60 to 2147483647)');
 
 export const labels = z
-  .record(z.string())
+  .record(z.string(), z.string())
   .describe('User-defined labels (key/value pairs)');
 
 export const page = z
