@@ -35,8 +35,8 @@ function stubFetch(
   return calls;
 }
 
-async function connectClient(): Promise<Client> {
-  const server = createServer(config);
+async function connectClient(serverConfig: Config = config): Promise<Client> {
+  const server = createServer(serverConfig);
   const client = new Client({ name: 'test-client', version: '0.0.0' });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -109,6 +109,31 @@ describe('tool registration', () => {
     ).toBe(true);
     expect(byName.get('list_zones')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('export_zonefile')?.annotations?.readOnlyHint).toBe(true);
+  });
+});
+
+describe('without a token', () => {
+  const anonymous: Config = { token: undefined, baseUrl: config.baseUrl };
+
+  it('still completes the handshake and lists all tools', async () => {
+    // This is the path registries and inspectors take: no credentials.
+    const client = await connectClient(anonymous);
+    const { tools } = await client.listTools();
+    expect(tools).toHaveLength(22);
+  });
+
+  it('fails the call itself with the setup instructions', async () => {
+    const calls = stubFetch(() => jsonResponse({}));
+    const client = await connectClient(anonymous);
+
+    const result = (await client.callTool({
+      name: 'list_zones',
+      arguments: {},
+    })) as CallToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain('HETZNER_API_TOKEN');
+    expect(calls).toHaveLength(0);
   });
 });
 

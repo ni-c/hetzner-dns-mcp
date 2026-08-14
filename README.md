@@ -26,6 +26,10 @@ Configuration is provided via environment variables:
 | `HETZNER_API_TOKEN`    | yes      | Hetzner Cloud API token (project-scoped)                      |
 | `HETZNER_API_BASE_URL` | no       | Base URL of the API (default: `https://api.hetzner.cloud/v1`) |
 
+Without a token the server still starts and lists its tools (so registries and
+inspectors can introspect it), but every tool call fails with setup
+instructions instead of reaching the API.
+
 ## Installation
 
 ### Claude Code
@@ -73,6 +77,37 @@ cd hetzner-dns-mcp
 npm install
 npm run build
 # then use `node /path/to/hetzner-dns-mcp/dist/index.js` as the command
+```
+
+### Docker
+
+```bash
+docker build -t hetzner-dns-mcp .
+docker run -i --rm -e HETZNER_API_TOKEN=your-token hetzner-dns-mcp
+```
+
+The image talks MCP over stdio, so clients need `docker run -i` (no port is
+exposed):
+
+```json
+{
+  "mcpServers": {
+    "hetzner-dns": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "HETZNER_API_TOKEN",
+        "hetzner-dns-mcp"
+      ],
+      "env": {
+        "HETZNER_API_TOKEN": "your-token"
+      }
+    }
+  }
+}
 ```
 
 ## Tools

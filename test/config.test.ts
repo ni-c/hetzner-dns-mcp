@@ -15,9 +15,24 @@ afterEach(() => {
 });
 
 describe('loadConfig', () => {
-  it('exits when HETZNER_API_TOKEN is missing', () => {
-    stubExit();
-    expect(() => loadConfig({})).toThrow('process.exit');
+  it('warns but does not exit when HETZNER_API_TOKEN is missing', () => {
+    // Registries and inspectors start the server without credentials and
+    // expect the MCP handshake to succeed.
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit');
+    });
+    const error = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+
+    const config = loadConfig({});
+
+    expect(config.token).toBeUndefined();
+    expect(config.baseUrl).toBe('https://api.hetzner.cloud/v1');
+    expect(exit).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('HETZNER_API_TOKEN')
+    );
   });
 
   it('uses the default base URL when none is configured', () => {

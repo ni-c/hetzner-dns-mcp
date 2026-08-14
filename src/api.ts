@@ -1,4 +1,4 @@
-import type { Config } from './config.js';
+import { MISSING_TOKEN_MESSAGE, type Config } from './config.js';
 
 export class HetznerApiError extends Error {
   constructor(
@@ -27,11 +27,11 @@ export type QueryParams = Record<
  */
 export class HetznerApi {
   private readonly baseUrl: string;
-  private readonly authHeader: string;
+  private readonly token: string | undefined;
 
   constructor(config: Config) {
     this.baseUrl = config.baseUrl;
-    this.authHeader = `Bearer ${config.token}`;
+    this.token = config.token;
   }
 
   async request(
@@ -39,8 +39,13 @@ export class HetznerApi {
     path: string,
     body?: unknown
   ): Promise<unknown> {
+    // The token is only required here, not at startup, so that the server can
+    // still be started and introspected without credentials.
+    if (!this.token) {
+      throw new Error(MISSING_TOKEN_MESSAGE);
+    }
     const headers: Record<string, string> = {
-      Authorization: this.authHeader,
+      Authorization: `Bearer ${this.token}`,
       Accept: 'application/json',
     };
     const init: RequestInit = {

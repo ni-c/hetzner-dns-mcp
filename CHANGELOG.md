@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `Dockerfile` (multi-stage, non-root, stdio entrypoint) and `.dockerignore`,
+  so registries that build and introspect the server in a container no longer
+  have to guess a build.
+
+### Changed
+
+- A missing `HETZNER_API_TOKEN` no longer exits at startup. The server
+  completes the MCP handshake and lists its tools without credentials; the
+  token is required when a tool actually calls the API, which then fails with
+  the same setup instructions as before. Base URL validation still exits,
+  since a bad base URL can leak the token.
+
 ## [0.2.3] - 2026-08-13
 
 ### Changed
