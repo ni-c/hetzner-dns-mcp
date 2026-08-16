@@ -14,6 +14,14 @@ Lets MCP clients like Claude Code, Claude Desktop or Codex manage your Hetzner D
 
 > **Note:** This server targets the current DNS API that is part of the **Hetzner Cloud API** (`api.hetzner.cloud`). The legacy DNS API (`dns.hetzner.com`) was shut down in May 2026 and is not supported.
 
+![Demo: listing the tools, a refused set_records call, and the same call succeeding with the confirmation token it returned](https://hetzner-dns-mcp.ni-c.de/demo.gif)
+
+<p align="center">
+  <img src="https://hetzner-dns-mcp.ni-c.de/architecture.svg" alt="An MCP client speaks stdio to hetzner-dns-mcp, which validates arguments, gates destructive calls behind a confirmation token, and calls the Hetzner Cloud API over HTTPS" width="760">
+</p>
+
+📖 **Full documentation: [hetzner-dns-mcp.ni-c.de](https://hetzner-dns-mcp.ni-c.de)**
+
 ## Requirements
 
 - Node.js ≥ 22

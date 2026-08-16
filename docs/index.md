@@ -1,0 +1,102 @@
+---
+layout: home
+
+hero:
+  name: hetzner-dns-mcp
+  text: Your DNS, through the assistant
+  tagline: An MCP server for the Hetzner Cloud DNS API — 22 tools for zones, record sets, zone files, TTLs and protection, with a confirmation token in front of everything irreversible.
+  actions:
+    - theme: brand
+      text: Get started
+      link: /guide/getting-started
+    - theme: alt
+      text: Tool reference
+      link: /reference/tools
+    - theme: alt
+      text: View on GitHub
+      link: https://github.com/ni-c/hetzner-dns-mcp
+
+features:
+  - title: Zones and record sets
+    details: List, create, update and delete zones and RRSets, import and export BIND zone files, change TTLs and protection, and follow the asynchronous zone actions that Hetzner queues behind them.
+  - title: Destructive calls need a token
+    details: Deleting a zone or replacing a record set is refused on the first call and answered with a random, single-use token — one that exists only in a previous tool result, so nothing hidden inside a DNS record can produce it.
+  - title: Nothing upstream is trusted
+    details: Record values, comments and zone files come back wrapped as untrusted data, secret-looking keys are redacted, oversized values are truncated and HTML error pages are dropped instead of pasted into the context.
+  - title: Read-only when you want it
+    details: HETZNER_READ_ONLY=true registers the seven read tools and nothing else — the write tools do not exist on the protocol, rather than failing when called.
+---
+
+## The two-step flow, in 15 seconds
+
+![Listing the tools, a refused set_records call, and the same call succeeding with the confirmation token it returned](/demo.gif)
+
+## How it fits together
+
+<figure class="diagram">
+<!-- Sync note: this SVG is duplicated as public/architecture.svg for the README
+     and npm, where CSS variables are unavailable and the colours are baked in
+     behind a prefers-color-scheme media query. Change both. -->
+<svg viewBox="0 0 760 260" role="img" aria-labelledby="arch-title arch-desc">
+  <title id="arch-title">Architecture of hetzner-dns-mcp</title>
+  <desc id="arch-desc">An MCP client speaks JSON-RPC over stdio to hetzner-dns-mcp, which validates arguments, gates destructive calls behind a confirmation token, and calls the Hetzner Cloud API over HTTPS. Responses pass back through a sanitizer.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" />
+    </marker>
+    <marker id="arrow-accent" class="accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" />
+    </marker>
+  </defs>
+
+  <rect class="node" x="12" y="76" width="150" height="86" rx="10" />
+  <text x="87" y="108" text-anchor="middle" class="label-title">MCP client</text>
+  <text x="87" y="128" text-anchor="middle" class="label-muted">Claude Code, Desktop,</text>
+  <text x="87" y="144" text-anchor="middle" class="label-muted">Codex, Inspector</text>
+
+  <rect class="node-accent" x="246" y="34" width="270" height="192" rx="12" />
+  <text x="381" y="62" text-anchor="middle" class="label-title">hetzner-dns-mcp</text>
+
+  <rect class="node" x="266" y="78" width="230" height="34" rx="8" />
+  <text x="381" y="99" text-anchor="middle" class="label-mono">zod schemas · path guards</text>
+
+  <rect class="node" x="266" y="122" width="230" height="34" rx="8" />
+  <text x="381" y="143" text-anchor="middle" class="label-mono">confirmation tokens</text>
+
+  <rect class="node" x="266" y="166" width="230" height="34" rx="8" />
+  <text x="381" y="187" text-anchor="middle" class="label-mono">redact · truncate · mark</text>
+
+  <rect class="node" x="600" y="76" width="148" height="86" rx="10" />
+  <text x="674" y="108" text-anchor="middle" class="label-title">Hetzner Cloud</text>
+  <text x="674" y="128" text-anchor="middle" class="label-muted">api.hetzner.cloud</text>
+  <text x="674" y="144" text-anchor="middle" class="label-muted">/v1/zones</text>
+
+  <path class="edge-accent" d="M 166 108 L 242 108" marker-end="url(#arrow-accent)" />
+  <text x="204" y="98" text-anchor="middle" class="label-muted">stdio</text>
+
+  <path class="edge edge-dashed" d="M 242 138 L 166 138" marker-end="url(#arrow)" />
+  <text x="204" y="156" text-anchor="middle" class="label-muted">results</text>
+
+  <path class="edge-accent" d="M 520 108 L 596 108" marker-end="url(#arrow-accent)" />
+  <text x="558" y="98" text-anchor="middle" class="label-muted">HTTPS</text>
+
+  <path class="edge edge-dashed" d="M 596 138 L 520 138" marker-end="url(#arrow)" />
+  <text x="558" y="156" text-anchor="middle" class="label-muted">JSON</text>
+</svg>
+<figcaption>Arguments are validated before they reach a URL; results are sanitized before they reach the model.</figcaption>
+</figure>
+
+## In one command
+
+```bash
+claude mcp add hetzner-dns -s user \
+  -e HETZNER_API_TOKEN=your-token \
+  -- npx -y hetzner-dns-mcp
+```
+
+Then ask for what you want — "what does the www record for example.com point at?",
+"add an AAAA record for the new host", "export the zone file before we touch
+anything". See [Getting started](/guide/getting-started) for the token, and
+[Connecting clients](/guide/clients) for Claude Desktop, Codex, the Inspector and
+Docker.

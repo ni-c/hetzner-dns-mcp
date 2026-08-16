@@ -1,3 +1,8 @@
 dist/
 coverage/
 package-lock.json
+# The docs site has its own toolchain and build output.
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+docs/package-lock.json
