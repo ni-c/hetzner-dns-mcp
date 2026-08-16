@@ -8,12 +8,12 @@
     "url": "https://github.com/ni-c/hetzner-dns-mcp",
     "source": "github"
   },
-  "version": "0.2.3",
+  "version": "0.3.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "hetzner-dns-mcp",
-      "version": "0.2.3",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       },
@@ -41,7 +41,7 @@
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/ni-c/hetzner-dns-mcp:0.2.3",
+      "identifier": "ghcr.io/ni-c/hetzner-dns-mcp:0.3.0",
       "transport": {
         "type": "stdio"
       },

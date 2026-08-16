@@ -5,13 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-16
 
 ### Added
 
 - `Dockerfile` (multi-stage, non-root, stdio entrypoint) and `.dockerignore`,
   so registries that build and introspect the server in a container no longer
   have to guess a build.
+- Multi-arch container images (amd64/arm64) at
+  `ghcr.io/ni-c/hetzner-dns-mcp`, published from CI with an SBOM and
+  max-mode build provenance and scanned with Trivy on every push and pull
+  request. `server.json` lists the image as an OCI package, so the MCP
+  registry offers it alongside the npm package.
+- `HETZNER_READ_ONLY=true` registers only the seven read-only tools. The write
+  tools are not registered at all rather than rejected when called, so there is
+  no code path from a write request to the API.
+- Documentation site at [hetzner-dns-mcp.ni-c.de](https://hetzner-dns-mcp.ni-c.de)
+  with a guide, the full tool reference and the security model.
 
 ### Changed
 
@@ -20,6 +30,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token is required when a tool actually calls the API, which then fails with
   the same setup instructions as before. Base URL validation still exits,
   since a bad base URL can leak the token.
+- **Breaking:** the `confirm` boolean is gone. Destructive tools now take an
+  optional `confirmToken` instead — see below. Callers that passed
+  `confirm: true` will be refused and handed a token to call again with.
+- `engines.node` raised to `>=22`; Node 20 is end-of-life and is no longer in
+  the CI matrix. The container has been on Node 24 all along.
+- Published source maps embed their sources, since only `dist/` is shipped and
+  the maps previously pointed at a `src/` that is not in the tarball.
+
+### Security
+
+- **Destructive tools require a server-issued confirmation token.** Every
+  irreversible tool refuses its first call and returns a random, single-use
+  token with a five-minute lifetime; a second call must repeat the identical
+  arguments and pass it. For `set_records`, `remove_records`,
+  `import_zonefile` and `change_primary_nameservers` the token is bound to a
+  SHA-256 fingerprint of the payload, so a confirmation for one record list
+  cannot write a different one.
+
+  The previous `confirm` boolean was a value the model set itself, while the
+  refusal messages pasted the current RRSet contents back as raw API JSON.
+  Together that was a self-approving loop: an instruction hidden in a TXT
+  record value or a zone-file comment arrived verbatim in the very message
+  asking for confirmation. A token cannot be produced that way, because it
+  only ever exists in a previous result from this server.
+
+- Removing protection now counts as destructive. `change_zone_protection` and
+  `change_rrset_protection` had no guard at all, so unprotecting a zone and
+  deleting it was two uninterrupted calls; disabling protection is now gated
+  exactly like the deletion it enables, while enabling it stays immediate.
+- Confirmation messages no longer quote anything read back from the API. They
+  report record counts and TTLs only.
+- API responses are wrapped in an `<untrusted-data>` envelope, keys matching
+  `tsig_key`, `token`, `secret`, `password` or `credential` are redacted,
+  single values are truncated at 4 000 characters and whole results at
+  200 000.
+- Upstream error bodies are truncated at 2 000 characters and HTML error pages
+  — a reverse proxy or WAF in front of the API — are dropped entirely instead
+  of being pasted into the model's context.
+- `HETZNER_API_TOKEN` and `HETZNER_API_BASE_URL` are deleted from the
+  environment once read, so a later crash report or diagnostic dump cannot
+  expose them. An unparseable base URL is no longer echoed back, since it can
+  contain a `user:token@` part.
+- `mcp-publisher` is pinned to a release and verified against its SHA-256
+  before it runs. It was fetched from `/releases/latest` unverified, in a job
+  holding `id-token: write`.
+- The runtime image no longer ships npm, npx or corepack; they are never
+  invoked there, but their vendored dependencies kept appearing in scans.
+- CI additionally runs CodeQL and a Trivy scan of the image for both
+  architectures.
 
 ## [0.2.3] - 2026-08-13
 
