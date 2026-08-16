@@ -1,11 +1,15 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import type { HetznerApi } from '../api.js';
 import { jsonResult, run } from '../result.js';
 import { page, perPage, zone } from '../schema.js';
+import type { ToolContext } from './context.js';
 
-export function registerActionTools(server: McpServer, api: HetznerApi): void {
+/** Both action tools are read-only, so this module ignores `readOnly`. */
+export function registerActionTools(
+  server: McpServer,
+  { api }: ToolContext
+): void {
   server.registerTool(
     'list_zone_actions',
     {

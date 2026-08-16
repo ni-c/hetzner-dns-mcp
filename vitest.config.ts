@@ -11,10 +11,10 @@ export default defineConfig({
       // Vitest 4 measures AST-based (stricter than v3); thresholds sit just
       // below the measured baseline at the time of the bump.
       thresholds: {
-        statements: 85,
-        branches: 68,
-        functions: 70,
-        lines: 85,
+        statements: 92,
+        branches: 85,
+        functions: 82,
+        lines: 92,
       },
     },
   },

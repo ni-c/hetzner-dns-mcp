@@ -12,10 +12,15 @@ FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a5
 WORKDIR /app
 ENV NODE_ENV=production
 
+# npm is never invoked at runtime, but its vendored dependencies keep showing up
+# in image scans. Removing it drops that surface entirely.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 # The server reports its version from package.json at runtime (src/server.ts).
-COPY package.json package-lock.json ./
+COPY package.json ./
 
 # Ownership proof for the MCP Registry: must match server.json's name.
 LABEL io.modelcontextprotocol.server.name="io.github.ni-c/hetzner-dns-mcp"

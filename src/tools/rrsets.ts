@@ -2,9 +2,11 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import type { HetznerApi } from '../api.js';
+import { fingerprint } from '../confirm.js';
 import { errorResult, jsonResult, run } from '../result.js';
 import {
   RRSET_TYPES,
+  confirmToken,
   labels,
   page,
   perPage,
@@ -15,8 +17,38 @@ import {
   ttl,
   zone,
 } from '../schema.js';
+import type { ToolContext } from './context.js';
 
-export function registerRrsetTools(server: McpServer, api: HetznerApi): void {
+/**
+ * Describes the RRSet a destructive call is about to change, in numbers only.
+ *
+ * Record values and comments are written by whoever controls the zone, so they
+ * must not appear in a confirmation message that a model reads and acts on.
+ */
+async function rrsetSummary(
+  api: HetznerApi,
+  zone: string,
+  name: string,
+  type: string
+): Promise<string> {
+  try {
+    const response = (await api.get(
+      `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}`
+    )) as { rrset?: { records?: unknown[]; ttl?: number | null } };
+    const count = response.rrset?.records?.length;
+    if (typeof count !== 'number')
+      return 'currently holds an unknown number of records';
+    const ttl = response.rrset?.ttl;
+    const ttlText = typeof ttl === 'number' ? `, TTL ${ttl}` : '';
+    return `currently holds ${count} record(s)${ttlText}`;
+  } catch {
+    return 'currently holds an unknown number of records';
+  }
+}
+
+export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
+  const { api, confirmations, readOnly } = ctx;
+
   server.registerTool(
     'list_rrsets',
     {
@@ -74,6 +106,8 @@ export function registerRrsetTools(server: McpServer, api: HetznerApi): void {
         )
       )
   );
+
+  if (readOnly) return;
 
   server.registerTool(
     'create_rrset',
@@ -134,30 +168,24 @@ export function registerRrsetTools(server: McpServer, api: HetznerApi): void {
     {
       title: 'Delete RRSet',
       description:
-        'Permanently delete an RRSet (DNS record set) with all its records. This is irreversible. Requires confirm=true.',
+        'Permanently delete an RRSet (DNS record set) with all its records. This is irreversible. The first call returns a short-lived confirmation token; ask the user, then call again with confirmToken.',
       inputSchema: {
         zone,
         name: rrsetName,
         type: rrsetType,
-        confirm: z
-          .boolean()
-          .default(false)
-          .describe(
-            'Must be true to actually delete the RRSet. Ask the user for confirmation first.'
-          ),
+        confirmToken,
       },
       annotations: { destructiveHint: true },
     },
-    ({ zone, name, type, confirm }) =>
+    ({ zone, name, type, confirmToken }) =>
       run(async () => {
-        if (!confirm) {
-          const current = await api.get(
-            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}`
-          );
+        const resource = `delete_rrset:${zone}${rrsetPath(name, type)}`;
+        if (!confirmations.consume(resource, confirmToken)) {
+          const summary = await rrsetSummary(api, zone, name, type);
+          const token = confirmations.issue(resource);
           return errorResult(
-            `Refusing to delete RRSet "${name}/${type}" of zone "${zone}" without confirmation. ` +
-              'Deleting is irreversible. Call delete_rrset again with confirm=true after the user confirmed.\n' +
-              `Current contents:\n${JSON.stringify(current, null, 2)}`
+            `Refusing to delete RRSet "${name}/${type}" of zone "${zone}" without confirmation. It ${summary}, and deleting is irreversible. Use get_rrset to review the contents. ` +
+              `Confirm with the user, then call delete_rrset again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}".`
           );
         }
         return jsonResult(
@@ -173,32 +201,27 @@ export function registerRrsetTools(server: McpServer, api: HetznerApi): void {
     {
       title: 'Set records of an RRSet',
       description:
-        'Replace ALL records of an RRSet with the given records. Existing records not listed are removed. Use add_records to append instead. Requires confirm=true.',
+        'Replace ALL records of an RRSet with the given records. Existing records not listed are removed. Use add_records to append instead. The first call returns a short-lived confirmation token bound to exactly this record list.',
       inputSchema: {
         zone,
         name: rrsetName,
         type: rrsetType,
         records,
-        confirm: z
-          .boolean()
-          .default(false)
-          .describe(
-            'Must be true to actually replace the records. Ask the user for confirmation first.'
-          ),
+        confirmToken,
       },
       annotations: { destructiveHint: true },
     },
-    ({ zone, name, type, records, confirm }) =>
+    ({ zone, name, type, records, confirmToken }) =>
       run(async () => {
-        if (!confirm) {
-          const current = await api.get(
-            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}`
-          );
+        // Binding the token to the record list stops a confirmation obtained
+        // for one set of values from writing a different one.
+        const resource = `set_records:${zone}${rrsetPath(name, type)}:${fingerprint(records)}`;
+        if (!confirmations.consume(resource, confirmToken)) {
+          const summary = await rrsetSummary(api, zone, name, type);
+          const token = confirmations.issue(resource);
           return errorResult(
-            `Refusing to replace the records of RRSet "${name}/${type}" of zone "${zone}" without confirmation. ` +
-              'All existing records not listed will be removed. ' +
-              'Call set_records again with confirm=true after the user confirmed.\n' +
-              `Current contents:\n${JSON.stringify(current, null, 2)}`
+            `Refusing to replace the records of RRSet "${name}/${type}" of zone "${zone}" without confirmation. It ${summary}; all of them are replaced by the ${records.length} record(s) in this call. Use get_rrset to review the contents. ` +
+              `Confirm with the user, then call set_records again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}" and the identical records — the token only works for exactly this list.`
           );
         }
         return jsonResult(
@@ -245,32 +268,25 @@ export function registerRrsetTools(server: McpServer, api: HetznerApi): void {
     {
       title: 'Remove records from an RRSet',
       description:
-        'Remove specific records (matched by value) from an RRSet. Removing the last record deletes the RRSet. Requires confirm=true.',
+        'Remove specific records (matched by value) from an RRSet. Removing the last record deletes the RRSet. The first call returns a short-lived confirmation token bound to exactly this record list.',
       inputSchema: {
         zone,
         name: rrsetName,
         type: rrsetType,
         records,
-        confirm: z
-          .boolean()
-          .default(false)
-          .describe(
-            'Must be true to actually remove the records. Ask the user for confirmation first.'
-          ),
+        confirmToken,
       },
       annotations: { destructiveHint: true },
     },
-    ({ zone, name, type, records, confirm }) =>
+    ({ zone, name, type, records, confirmToken }) =>
       run(async () => {
-        if (!confirm) {
-          const current = await api.get(
-            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}`
-          );
+        const resource = `remove_records:${zone}${rrsetPath(name, type)}:${fingerprint(records)}`;
+        if (!confirmations.consume(resource, confirmToken)) {
+          const summary = await rrsetSummary(api, zone, name, type);
+          const token = confirmations.issue(resource);
           return errorResult(
-            `Refusing to remove records from RRSet "${name}/${type}" of zone "${zone}" without confirmation. ` +
-              'Removing the last record deletes the RRSet. ' +
-              'Call remove_records again with confirm=true after the user confirmed.\n' +
-              `Current contents:\n${JSON.stringify(current, null, 2)}`
+            `Refusing to remove records from RRSet "${name}/${type}" of zone "${zone}" without confirmation. It ${summary}; this call removes ${records.length} of them, and removing the last record deletes the RRSet. Use get_rrset to review the contents. ` +
+              `Confirm with the user, then call remove_records again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}" and the identical records — the token only works for exactly this list.`
           );
         }
         return jsonResult(
@@ -316,7 +332,7 @@ export function registerRrsetTools(server: McpServer, api: HetznerApi): void {
     {
       title: 'Change RRSet protection',
       description:
-        'Enable or disable the change protection of an RRSet. A protected RRSet cannot be changed or deleted until the protection is removed.',
+        'Enable or disable the change protection of an RRSet. Enabling is immediate; DISABLING removes the last safeguard against delete_rrset and set_records and therefore needs a confirmToken.',
       inputSchema: {
         zone,
         name: rrsetName,
@@ -326,17 +342,28 @@ export function registerRrsetTools(server: McpServer, api: HetznerApi): void {
           .describe(
             'true to protect the RRSet from changes and deletion, false to unprotect'
           ),
+        confirmToken,
       },
       annotations: { idempotentHint: true },
     },
-    ({ zone, name, type, change }) =>
-      run(async () =>
-        jsonResult(
+    ({ zone, name, type, change, confirmToken }) =>
+      run(async () => {
+        if (!change) {
+          const resource = `change_rrset_protection:${zone}${rrsetPath(name, type)}`;
+          if (!confirmations.consume(resource, confirmToken)) {
+            const token = confirmations.issue(resource);
+            return errorResult(
+              `Refusing to remove the change protection of RRSet "${name}/${type}" of zone "${zone}" without confirmation. Doing so makes the RRSet editable and deletable again. ` +
+                `Confirm with the user, then call change_rrset_protection again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}".`
+            );
+          }
+        }
+        return jsonResult(
           await api.post(
             `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/change_protection`,
             { change }
           )
-        )
-      )
+        );
+      })
   );
 }

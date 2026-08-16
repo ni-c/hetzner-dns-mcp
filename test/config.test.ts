@@ -99,4 +99,49 @@ describe('loadConfig', () => {
       expect.stringContaining('proxy.example.com')
     );
   });
+
+  it('removes the credentials from the environment after reading them', () => {
+    // Anything that dumps the environment later — a crash reporter, a Node
+    // diagnostic report — must not find the token there.
+    const env = {
+      HETZNER_API_TOKEN: 'test-token',
+      HETZNER_API_BASE_URL: 'https://api.hetzner.cloud/v1',
+      UNRELATED: 'kept',
+    };
+
+    const config = loadConfig(env);
+
+    expect(config.token).toBe('test-token');
+    expect(env.HETZNER_API_TOKEN).toBeUndefined();
+    expect(env.HETZNER_API_BASE_URL).toBeUndefined();
+    expect(env.UNRELATED).toBe('kept');
+  });
+
+  it('does not echo an unparseable base URL, which may carry credentials', () => {
+    stubExit();
+    const error = vi.mocked(console.error);
+
+    expect(() =>
+      loadConfig({
+        HETZNER_API_TOKEN: 'test-token',
+        HETZNER_API_BASE_URL: 'ht tp://user:s3cret@api.hetzner.cloud',
+      })
+    ).toThrow('process.exit');
+
+    expect(error).toHaveBeenCalledWith(expect.not.stringContaining('s3cret'));
+  });
+
+  it('reads HETZNER_READ_ONLY', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(loadConfig({ HETZNER_API_TOKEN: 't' }).readOnly).toBe(false);
+    expect(
+      loadConfig({ HETZNER_API_TOKEN: 't', HETZNER_READ_ONLY: 'true' }).readOnly
+    ).toBe(true);
+    expect(
+      loadConfig({ HETZNER_API_TOKEN: 't', HETZNER_READ_ONLY: '1' }).readOnly
+    ).toBe(true);
+    expect(
+      loadConfig({ HETZNER_API_TOKEN: 't', HETZNER_READ_ONLY: 'no' }).readOnly
+    ).toBe(false);
+  });
 });

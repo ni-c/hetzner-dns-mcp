@@ -2,8 +2,10 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import type { HetznerApi } from '../api.js';
+import { fingerprint } from '../confirm.js';
 import { errorResult, jsonResult, run } from '../result.js';
-import { labels, page, perPage, ttl, zone } from '../schema.js';
+import { confirmToken, labels, page, perPage, ttl, zone } from '../schema.js';
+import type { ToolContext } from './context.js';
 
 const primaryNameservers = z
   .array(
@@ -28,14 +30,33 @@ const primaryNameservers = z
   .min(1)
   .describe('Primary nameservers to transfer the zone from (secondary zones)');
 
-async function zoneName(api: HetznerApi, idOrName: string): Promise<string> {
-  const response = (await api.get(
-    `/zones/${encodeURIComponent(idOrName)}`
-  )) as { zone?: { name?: string } };
-  return response.zone?.name ?? 'unknown';
+/**
+ * Counts what a destructive call is about to affect, for the confirmation text.
+ *
+ * Only the number is used. Names, labels and record values from the API are
+ * attacker-controlled — putting them into the very message that asks the model
+ * to confirm would hand an injected instruction the last word.
+ */
+async function zoneRecordCount(
+  api: HetznerApi,
+  idOrName: string
+): Promise<string> {
+  try {
+    const response = (await api.get(
+      `/zones/${encodeURIComponent(idOrName)}`
+    )) as { zone?: { record_count?: number } };
+    const count = response.zone?.record_count;
+    return typeof count === 'number'
+      ? `${count} records`
+      : 'an unknown number of records';
+  } catch {
+    return 'an unknown number of records';
+  }
 }
 
-export function registerZoneTools(server: McpServer, api: HetznerApi): void {
+export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
+  const { api, confirmations, readOnly } = ctx;
+
   server.registerTool(
     'list_zones',
     {
@@ -87,6 +108,26 @@ export function registerZoneTools(server: McpServer, api: HetznerApi): void {
         jsonResult(await api.get(`/zones/${encodeURIComponent(zone)}`))
       )
   );
+
+  server.registerTool(
+    'export_zonefile',
+    {
+      title: 'Export zone file',
+      description:
+        'Export the full contents of a DNS zone as a zone file (BIND format).',
+      inputSchema: { zone },
+      annotations: { readOnlyHint: true },
+    },
+    ({ zone }) =>
+      run(async () => {
+        const response = (await api.get(
+          `/zones/${encodeURIComponent(zone)}/zonefile`
+        )) as { zonefile?: string };
+        return jsonResult(response);
+      })
+  );
+
+  if (readOnly) return;
 
   server.registerTool(
     'create_zone',
@@ -153,26 +194,19 @@ export function registerZoneTools(server: McpServer, api: HetznerApi): void {
     {
       title: 'Delete DNS zone',
       description:
-        'Permanently delete a DNS zone including all its records. This is irreversible. Requires confirm=true.',
-      inputSchema: {
-        zone,
-        confirm: z
-          .boolean()
-          .default(false)
-          .describe(
-            'Must be true to actually delete the zone. Ask the user for confirmation first.'
-          ),
-      },
+        'Permanently delete a DNS zone including all its records. This is irreversible. The first call returns a short-lived confirmation token; ask the user, then call again with confirmToken.',
+      inputSchema: { zone, confirmToken },
       annotations: { destructiveHint: true },
     },
-    ({ zone, confirm }) =>
+    ({ zone, confirmToken }) =>
       run(async () => {
-        const name = await zoneName(api, zone);
-        if (!confirm) {
+        const resource = `delete_zone:${zone}`;
+        if (!confirmations.consume(resource, confirmToken)) {
+          const count = await zoneRecordCount(api, zone);
+          const token = confirmations.issue(resource);
           return errorResult(
-            `Refusing to delete zone "${name}" without confirmation. ` +
-              'Deleting a zone removes all its DNS records irreversibly. ' +
-              'Call delete_zone again with confirm=true after the user confirmed.'
+            `Refusing to delete zone "${zone}" without confirmation. It currently holds ${count}, and deleting removes all of them irreversibly. ` +
+              `Confirm with the user, then call delete_zone again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}".`
           );
         }
         return jsonResult(
@@ -182,49 +216,29 @@ export function registerZoneTools(server: McpServer, api: HetznerApi): void {
   );
 
   server.registerTool(
-    'export_zonefile',
-    {
-      title: 'Export zone file',
-      description:
-        'Export the full contents of a DNS zone as a zone file (BIND format).',
-      inputSchema: { zone },
-      annotations: { readOnlyHint: true },
-    },
-    ({ zone }) =>
-      run(async () => {
-        const response = (await api.get(
-          `/zones/${encodeURIComponent(zone)}/zonefile`
-        )) as { zonefile?: string };
-        return jsonResult(response);
-      })
-  );
-
-  server.registerTool(
     'import_zonefile',
     {
       title: 'Import zone file',
       description:
-        'Import a zone file (BIND format) into an existing primary zone. This REPLACES the current records of the zone. Requires confirm=true. Consider export_zonefile first as a backup.',
+        'Import a zone file (BIND format) into an existing primary zone. This REPLACES the current records of the zone. The first call returns a short-lived confirmation token bound to exactly this zone file; ask the user, then call again with confirmToken. Consider export_zonefile first as a backup.',
       inputSchema: {
         zone,
         zonefile: z.string().min(1).describe('Zone file content to import'),
-        confirm: z
-          .boolean()
-          .default(false)
-          .describe(
-            'Must be true to actually import. Ask the user for confirmation first.'
-          ),
+        confirmToken,
       },
       annotations: { destructiveHint: true },
     },
-    ({ zone, zonefile, confirm }) =>
+    ({ zone, zonefile, confirmToken }) =>
       run(async () => {
-        const name = await zoneName(api, zone);
-        if (!confirm) {
+        // The token is bound to the zone file too: a confirmation for one
+        // import must not execute a different one.
+        const resource = `import_zonefile:${zone}:${fingerprint(zonefile)}`;
+        if (!confirmations.consume(resource, confirmToken)) {
+          const count = await zoneRecordCount(api, zone);
+          const token = confirmations.issue(resource);
           return errorResult(
-            `Refusing to import a zone file into zone "${name}" without confirmation. ` +
-              'Importing replaces the current records of the zone. ' +
-              'Call import_zonefile again with confirm=true after the user confirmed.'
+            `Refusing to import a zone file into zone "${zone}" without confirmation. The zone currently holds ${count}, all of which are replaced by the import. ` +
+              `Confirm with the user, then call import_zonefile again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}" and the identical zonefile — the token only works for exactly this content.`
           );
         }
         return jsonResult(
@@ -261,7 +275,7 @@ export function registerZoneTools(server: McpServer, api: HetznerApi): void {
     {
       title: 'Change zone protection',
       description:
-        'Enable or disable the delete protection of a DNS zone. A protected zone cannot be deleted until the protection is removed.',
+        'Enable or disable the delete protection of a DNS zone. Enabling is immediate; DISABLING removes the last safeguard against delete_zone and therefore needs a confirmToken, exactly like a deletion.',
       inputSchema: {
         zone,
         delete: z
@@ -269,18 +283,31 @@ export function registerZoneTools(server: McpServer, api: HetznerApi): void {
           .describe(
             'true to protect the zone from deletion, false to unprotect'
           ),
+        confirmToken,
       },
       annotations: { idempotentHint: true },
     },
-    ({ zone, delete: deleteProtection }) =>
-      run(async () =>
-        jsonResult(
+    ({ zone, delete: deleteProtection, confirmToken }) =>
+      run(async () => {
+        // Enabling protection is safe; removing it is the first half of a
+        // deletion and gets the same gate.
+        if (!deleteProtection) {
+          const resource = `change_zone_protection:${zone}`;
+          if (!confirmations.consume(resource, confirmToken)) {
+            const token = confirmations.issue(resource);
+            return errorResult(
+              `Refusing to remove the delete protection of zone "${zone}" without confirmation. Doing so makes the zone deletable. ` +
+                `Confirm with the user, then call change_zone_protection again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}".`
+            );
+          }
+        }
+        return jsonResult(
           await api.post(
             `/zones/${encodeURIComponent(zone)}/actions/change_protection`,
             { delete: deleteProtection }
           )
-        )
-      )
+        );
+      })
   );
 
   server.registerTool(
@@ -288,38 +315,22 @@ export function registerZoneTools(server: McpServer, api: HetznerApi): void {
     {
       title: 'Change primary nameservers',
       description:
-        'Replace the primary nameservers of a secondary zone (the servers Hetzner transfers the zone from). The ENTIRE zone content will be taken from the new primaries on the next transfer. Only applicable to zones in secondary mode. Requires confirm=true.',
+        'Replace the primary nameservers of a secondary zone (the servers Hetzner transfers the zone from). The ENTIRE zone content will be taken from the new primaries on the next transfer. Only applicable to zones in secondary mode. The first call returns a short-lived confirmation token bound to exactly this nameserver list.',
       inputSchema: {
         zone,
         primary_nameservers: primaryNameservers,
-        confirm: z
-          .boolean()
-          .default(false)
-          .describe(
-            'Must be true to actually change the primary nameservers. Ask the user for confirmation first.'
-          ),
+        confirmToken,
       },
       annotations: { destructiveHint: true },
     },
-    ({ zone, primary_nameservers, confirm }) =>
+    ({ zone, primary_nameservers, confirmToken }) =>
       run(async () => {
-        if (!confirm) {
-          const response = (await api.get(
-            `/zones/${encodeURIComponent(zone)}`
-          )) as {
-            zone?: {
-              name?: string;
-              primary_nameservers?: { address?: string; port?: number }[];
-            };
-          };
-          const current = (response.zone?.primary_nameservers ?? [])
-            .map((ns) => `${ns.address ?? '?'}:${ns.port ?? 53}`)
-            .join(', ');
+        const resource = `change_primary_nameservers:${zone}:${fingerprint(primary_nameservers)}`;
+        if (!confirmations.consume(resource, confirmToken)) {
+          const token = confirmations.issue(resource);
           return errorResult(
-            `Refusing to change the primary nameservers of zone "${response.zone?.name ?? zone}" without confirmation. ` +
-              'The entire zone content will be transferred from the new primaries. ' +
-              `Current primary nameservers: ${current || '(none)'}. ` +
-              'Call change_primary_nameservers again with confirm=true after the user confirmed.'
+            `Refusing to change the primary nameservers of zone "${zone}" without confirmation. The entire zone content will be transferred from the ${primary_nameservers.length} new primaries, replacing what is served today. Use get_zone to review the current primaries. ` +
+              `Confirm with the user, then call change_primary_nameservers again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}" and the identical nameserver list.`
           );
         }
         return jsonResult(

@@ -12,6 +12,25 @@ export class HetznerApiError extends Error {
   }
 }
 
+const MAX_ERROR_BODY_LENGTH = 2000;
+
+/**
+ * Limits what an upstream error body can inject into the model context. A
+ * reverse proxy or WAF in front of the API answers with an HTML page whose
+ * contents are neither useful nor trustworthy, so it is dropped entirely;
+ * anything else is truncated.
+ */
+function sanitizeErrorBody(body: string): string {
+  const trimmed = body.trim();
+  if (/^(<!doctype\s|<html[\s>])/i.test(trimmed)) {
+    return '(HTML error page omitted)';
+  }
+  if (trimmed.length > MAX_ERROR_BODY_LENGTH) {
+    return `${trimmed.slice(0, MAX_ERROR_BODY_LENGTH)}… (truncated)`;
+  }
+  return trimmed;
+}
+
 /** Query parameter values accepted by {@link HetznerApi.get}. Arrays are appended multiple times. */
 export type QueryParams = Record<
   string,
@@ -65,7 +84,12 @@ export class HetznerApi {
     const text = await response.text();
 
     if (!response.ok) {
-      throw new HetznerApiError(response.status, text, method, path);
+      throw new HetznerApiError(
+        response.status,
+        sanitizeErrorBody(text),
+        method,
+        path
+      );
     }
 
     if (text === '') return null;

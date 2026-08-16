@@ -87,6 +87,13 @@ export const perPage = z
   .optional()
   .describe('Entries per page (1-100, default 25)');
 
+export const confirmToken = z
+  .string()
+  .optional()
+  .describe(
+    'Confirmation token from the previous call of this same tool with identical arguments. Omit on the first call — the server then returns a token that is valid for a few minutes.'
+  );
+
 /** Builds the URL path segment for an RRSet, e.g. `/www/A`. */
 export function rrsetPath(name: string, type: string): string {
   return `/${encodeURIComponent(name)}/${encodeURIComponent(type)}`;

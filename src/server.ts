@@ -4,6 +4,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { HetznerApi } from './api.js';
 import type { Config } from './config.js';
+import { ConfirmationStore } from './confirm.js';
+import type { ToolContext } from './tools/context.js';
 import { registerActionTools } from './tools/actions.js';
 import { registerRrsetTools } from './tools/rrsets.js';
 import { registerZoneTools } from './tools/zones.js';
@@ -19,16 +21,22 @@ function packageVersion(): string {
 }
 
 export function createServer(config: Config): McpServer {
-  const api = new HetznerApi(config);
+  const ctx: ToolContext = {
+    api: new HetznerApi(config),
+    // One store per server: the tokens it hands out are only ever valid for
+    // this process, so a restart invalidates every pending confirmation.
+    confirmations: new ConfirmationStore(),
+    readOnly: config.readOnly,
+  };
 
   const server = new McpServer({
     name: 'hetzner-dns-mcp',
     version: packageVersion(),
   });
 
-  registerZoneTools(server, api);
-  registerRrsetTools(server, api);
-  registerActionTools(server, api);
+  registerZoneTools(server, ctx);
+  registerRrsetTools(server, ctx);
+  registerActionTools(server, ctx);
 
   return server;
 }

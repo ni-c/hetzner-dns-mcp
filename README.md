@@ -5,6 +5,8 @@
 [![npm downloads](https://img.shields.io/npm/dm/hetzner-dns-mcp)](https://www.npmjs.com/package/hetzner-dns-mcp)
 [![node](https://img.shields.io/node/v/hetzner-dns-mcp)](https://nodejs.org)
 [![license](https://img.shields.io/npm/l/hetzner-dns-mcp)](LICENSE)
+[![container](https://img.shields.io/badge/ghcr.io-ni--c%2Fhetzner--dns--mcp-blue)](https://github.com/ni-c/hetzner-dns-mcp/pkgs/container/hetzner-dns-mcp)
+[![docs](https://img.shields.io/badge/docs-hetzner--dns--mcp.ni--c.de-informational)](https://hetzner-dns-mcp.ni-c.de)
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for managing DNS zones and records via the [Hetzner Cloud API](https://docs.hetzner.cloud/reference/cloud#zones).
 
@@ -14,21 +16,25 @@ Lets MCP clients like Claude Code, Claude Desktop or Codex manage your Hetzner D
 
 ## Requirements
 
-- Node.js ≥ 20
+- Node.js ≥ 22
 - A Hetzner Cloud API token for the project that holds your DNS zones — create one in the [Hetzner Cloud Console](https://console.hetzner.com) under _your project → Security → API tokens_. Use a **read & write** token for full functionality (a read-only token limits you to the read tools).
 
 ## Configuration
 
 Configuration is provided via environment variables:
 
-| Variable               | Required | Description                                                   |
-| ---------------------- | -------- | ------------------------------------------------------------- |
-| `HETZNER_API_TOKEN`    | yes      | Hetzner Cloud API token (project-scoped)                      |
-| `HETZNER_API_BASE_URL` | no       | Base URL of the API (default: `https://api.hetzner.cloud/v1`) |
+| Variable               | Required | Description                                                               |
+| ---------------------- | -------- | ------------------------------------------------------------------------- |
+| `HETZNER_API_TOKEN`    | yes      | Hetzner Cloud API token (project-scoped)                                  |
+| `HETZNER_READ_ONLY`    | no       | `true` registers only the read tools; the write tools do not exist at all |
+| `HETZNER_API_BASE_URL` | no       | Base URL of the API (default: `https://api.hetzner.cloud/v1`)             |
 
 Without a token the server still starts and lists its tools (so registries and
 inspectors can introspect it), but every tool call fails with setup
 instructions instead of reaching the API.
+
+All three variables are deleted from the process environment once they have
+been read, so a later crash report or diagnostic dump cannot expose the token.
 
 ## Installation
 
@@ -81,9 +87,11 @@ npm run build
 
 ### Docker
 
+Multi-arch images (amd64/arm64) are published to GHCR with an SBOM and build
+provenance:
+
 ```bash
-docker build -t hetzner-dns-mcp .
-docker run -i --rm -e HETZNER_API_TOKEN=your-token hetzner-dns-mcp
+docker run -i --rm -e HETZNER_API_TOKEN=your-token ghcr.io/ni-c/hetzner-dns-mcp
 ```
 
 The image talks MCP over stdio, so clients need `docker run -i` (no port is
@@ -100,7 +108,7 @@ exposed):
         "--rm",
         "-e",
         "HETZNER_API_TOKEN",
-        "hetzner-dns-mcp"
+        "ghcr.io/ni-c/hetzner-dns-mcp"
       ],
       "env": {
         "HETZNER_API_TOKEN": "your-token"
@@ -114,18 +122,18 @@ exposed):
 
 ### Zones
 
-| Tool                         | Description                                                              |
-| ---------------------------- | ------------------------------------------------------------------------ |
-| `list_zones`                 | List zones with status, mode, nameservers and record counts              |
-| `get_zone`                   | Get the full details of a single zone                                    |
-| `create_zone`                | Create a primary or secondary zone, optionally from a zone file          |
-| `update_zone`                | Replace the labels of a zone                                             |
-| `delete_zone`                | Permanently delete a zone — requires `confirm=true`                      |
-| `export_zonefile`            | Export the zone as a BIND zone file                                      |
-| `import_zonefile`            | Import a BIND zone file (replaces all records) — requires `confirm=true` |
-| `change_zone_ttl`            | Change the default TTL of a zone                                         |
-| `change_zone_protection`     | Enable/disable delete protection                                         |
-| `change_primary_nameservers` | Replace the primaries of a secondary zone — requires `confirm=true`      |
+| Tool                         | Description                                                             |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `list_zones`                 | List zones with status, mode, nameservers and record counts             |
+| `get_zone`                   | Get the full details of a single zone                                   |
+| `create_zone`                | Create a primary or secondary zone, optionally from a zone file         |
+| `update_zone`                | Replace the labels of a zone                                            |
+| `delete_zone`                | Permanently delete a zone — needs a `confirmToken`                      |
+| `export_zonefile`            | Export the zone as a BIND zone file                                     |
+| `import_zonefile`            | Import a BIND zone file (replaces all records) — needs a `confirmToken` |
+| `change_zone_ttl`            | Change the default TTL of a zone                                        |
+| `change_zone_protection`     | Enable/disable delete protection — disabling needs a `confirmToken`     |
+| `change_primary_nameservers` | Replace the primaries of a secondary zone — needs a `confirmToken`      |
 
 ### RRSets (record sets)
 
@@ -135,12 +143,12 @@ exposed):
 | `get_rrset`               | Get a single RRSet by name and type                                   |
 | `create_rrset`            | Create a new RRSet with records                                       |
 | `update_rrset`            | Replace the labels of an RRSet                                        |
-| `delete_rrset`            | Permanently delete an RRSet — requires `confirm=true`                 |
-| `set_records`             | Replace **all** records of an RRSet — requires `confirm=true`         |
+| `delete_rrset`            | Permanently delete an RRSet — needs a `confirmToken`                  |
+| `set_records`             | Replace **all** records of an RRSet — needs a `confirmToken`          |
 | `add_records`             | Add records to an RRSet (creates it if missing)                       |
-| `remove_records`          | Remove specific records from an RRSet — requires `confirm=true`       |
+| `remove_records`          | Remove specific records from an RRSet — needs a `confirmToken`        |
 | `change_rrset_ttl`        | Change the TTL of an RRSet (or reset to the zone default with `null`) |
-| `change_rrset_protection` | Enable/disable change protection                                      |
+| `change_rrset_protection` | Enable/disable change protection — disabling needs a `confirmToken`   |
 
 ### Actions
 
@@ -151,9 +159,46 @@ exposed):
 
 ### Safety
 
-- `delete_zone`, `delete_rrset`, `import_zonefile`, `set_records`, `remove_records` and `change_primary_nameservers` refuse to run without an explicit `confirm=true` parameter and report what would be affected, so an MCP client can ask the user for confirmation first. Note that the `confirm` guard is advisory: a model can set `confirm=true` on its own. The actual security boundary is the permission prompt of your MCP host — do not auto-approve destructive tools.
+**Confirmation tokens.** Every irreversible tool — `delete_zone`, `delete_rrset`,
+`import_zonefile`, `set_records`, `remove_records`, `change_primary_nameservers`, and
+`change_zone_protection`/`change_rrset_protection` when they _remove_ protection —
+refuses its first call and returns a random, single-use token that is valid for five
+minutes. The second call must repeat the identical arguments and pass that token:
+
+```text
+1. set_records(zone: "example.com", name: "www", type: "A", records: [{value: "198.51.100.1"}])
+   → error: Refusing to replace the records … confirmToken: "3f9c…"
+2. set_records(…same arguments…, confirmToken: "3f9c…")
+   → executed
+```
+
+This is deliberately not a boolean the model can set on its own. The token exists only
+in a _previous_ tool result, so an instruction hidden in a TXT record or a zone-file
+comment cannot manufacture one. Tokens for `set_records`, `remove_records` and
+`import_zonefile` are bound to a hash of the exact payload: a confirmation for
+`["198.51.100.1"]` will not write `["198.51.100.66"]`.
+
+The token is a guard rail, not a security boundary — the boundary is the permission
+prompt of your MCP host. Do not auto-approve these tools.
+
+**Untrusted upstream data.** Everything the API returns is wrapped in an
+`<untrusted-data>` envelope, because record values, comments, labels and zone files are
+written by whoever controls the zone. Confirmation messages never quote that content;
+they report counts and TTLs only. Keys that look like secrets (`tsig_key`, `token`,
+`secret`, `password`) are redacted from results, oversized values are truncated, and
+HTML error pages from an intermediate proxy are dropped rather than pasted into the
+model's context.
+
+**Least privilege.** Set `HETZNER_READ_ONLY=true` to register only the seven read
+tools — the write tools then do not exist on the protocol at all, rather than failing
+at call time. Combine it with a read-only Hetzner token for a genuinely read-only
+setup.
+
+**Other guarantees.**
+
 - Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) so hosts can apply appropriate permission policies.
 - `HETZNER_API_BASE_URL` must be an `https` URL (`http` is only accepted for localhost) and must not contain credentials; a warning is printed when a non-default host is configured, because the API token is sent there.
+- Zone identifiers and RRSet names are validated against a strict character set and cannot escape the API path; requests never follow redirects, so the Bearer header cannot be replayed elsewhere.
 - TSIG keys passed to `create_zone`/`change_primary_nameservers` become part of the conversation context and client transcripts — treat them as secrets and rotate them if in doubt.
 - Hetzner-side resource protection is honored: protected zones/RRSets return an error with a hint to the corresponding `change_*_protection` tool.
 

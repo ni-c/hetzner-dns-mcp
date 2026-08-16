@@ -10,6 +10,9 @@
     "exactOptionalPropertyTypes": true,
     "declaration": true,
     "sourceMap": true,
+    // Only dist/ is published, so a map pointing at ../src resolves to nothing
+    // for consumers. Embedding the sources keeps stack traces readable.
+    "inlineSources": true,
     "types": ["node"],
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
