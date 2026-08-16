@@ -1,17 +1,19 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.ni-c/hetzner-dns-mcp",
+  "title": "Hetzner DNS",
   "description": "Manage DNS zones and records (zonefiles, RRSets, TTL, protection) via the Hetzner Cloud API",
+  "websiteUrl": "https://hetzner-dns-mcp.ni-c.de",
   "repository": {
     "url": "https://github.com/ni-c/hetzner-dns-mcp",
     "source": "github"
   },
-  "version": "0.2.2",
+  "version": "0.2.3",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "hetzner-dns-mcp",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "transport": {
         "type": "stdio"
       },
@@ -22,6 +24,40 @@
           "isRequired": true,
           "isSecret": true,
           "format": "string"
+        },
+        {
+          "name": "HETZNER_READ_ONLY",
+          "description": "Set to true to register only the read-only tools (default: false)",
+          "isRequired": false,
+          "format": "boolean"
+        },
+        {
+          "name": "HETZNER_API_BASE_URL",
+          "description": "Override the Hetzner Cloud API base URL (default: https://api.hetzner.cloud/v1)",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/ni-c/hetzner-dns-mcp:0.2.3",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "HETZNER_API_TOKEN",
+          "description": "Hetzner Cloud API token (project-scoped, Cloud Console -> Security -> API tokens)",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "HETZNER_READ_ONLY",
+          "description": "Set to true to register only the read-only tools (default: false)",
+          "isRequired": false,
+          "format": "boolean"
         },
         {
           "name": "HETZNER_API_BASE_URL",
