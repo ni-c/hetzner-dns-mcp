@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+<!-- #region changelog -->
+
 ## [0.3.1] - 2026-08-18
 
 ### Fixed
@@ -177,3 +179,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `change_rrset_protection`.
 - Action tools: `list_zone_actions`, `get_zone_action`.
 - Configuration via `HETZNER_API_TOKEN`, optional `HETZNER_API_BASE_URL`.
+
+<!-- #endregion changelog -->
