@@ -16,8 +16,16 @@ Lets MCP clients like Claude Code, Claude Desktop or Codex manage your Hetzner D
 
 ![Demo: listing the tools, a refused set_records call, and the same call succeeding with the confirmation token it returned](https://hetzner-dns-mcp.ni-c.de/demo.gif)
 
+<!-- <picture> is resolved against the colour scheme of the page showing it, so GitHub
+     picks the variant that matches its own theme toggle. npm strips <picture> and
+     <source> when it sanitises the README and keeps the <img>, which is why that
+     fallback brings its own dark card instead of relying on a media query. -->
 <p align="center">
-  <img src="https://hetzner-dns-mcp.ni-c.de/architecture.svg" alt="An MCP client speaks stdio to hetzner-dns-mcp, which validates arguments, gates destructive calls behind a confirmation token, and calls the Hetzner Cloud API over HTTPS" width="760">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://hetzner-dns-mcp.ni-c.de/architecture-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://hetzner-dns-mcp.ni-c.de/architecture-light.svg">
+    <img src="https://hetzner-dns-mcp.ni-c.de/architecture.svg" alt="An MCP client speaks stdio to hetzner-dns-mcp, which validates arguments, gates destructive calls behind a confirmation token, and calls the Hetzner Cloud API over HTTPS" width="800">
+  </picture>
 </p>
 
 📖 **Full documentation: [hetzner-dns-mcp.ni-c.de](https://hetzner-dns-mcp.ni-c.de)**
