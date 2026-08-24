@@ -7,6 +7,7 @@
 [![license](https://img.shields.io/npm/l/hetzner-dns-mcp)](LICENSE)
 [![container](https://img.shields.io/badge/ghcr.io-ni--c%2Fhetzner--dns--mcp-blue)](https://github.com/ni-c/hetzner-dns-mcp/pkgs/container/hetzner-dns-mcp)
 [![docs](https://img.shields.io/badge/docs-hetzner--dns--mcp.ni--c.de-informational)](https://hetzner-dns-mcp.ni-c.de)
+[![sponsor](https://img.shields.io/badge/sponsor-ni--c-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ni-c)
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for managing DNS zones and records via the [Hetzner Cloud API](https://docs.hetzner.cloud/reference/cloud#zones).
 

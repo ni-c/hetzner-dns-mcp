@@ -20,6 +20,7 @@
     "url": "https://github.com/ni-c/hetzner-dns-mcp/issues"
   },
   "homepage": "https://github.com/ni-c/hetzner-dns-mcp#readme",
+  "funding": "https://github.com/sponsors/ni-c",
   "type": "module",
   "bin": {
     "hetzner-dns-mcp": "dist/index.js"
