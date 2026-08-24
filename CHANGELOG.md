@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [0.3.2] - 2026-08-24
+
+### Fixed
+
+- The zone apex was unreachable. Eight of the RRSet tools put the name into the
+  URL path — `get_rrset`, `update_rrset`, `delete_rrset`, `set_records`,
+  `add_records`, `remove_records`, `change_rrset_ttl` and
+  `change_rrset_protection` — and every one of them ran it through
+  `encodeURIComponent`, which turns the apex name `@` into `%40`. The Hetzner
+  Cloud API does not decode that: `GET /zones/example.com/rrsets/%40/A` answers
+  404 `not_found` while the RRSet exists and `list_rrsets` returns it. The A,
+  AAAA, MX and TXT records of the domain itself could therefore be listed but
+  neither read nor changed, and `add_records` failed with a 422 about invalid
+  syntax. RFC 3986 permits `@` in a path segment, so the name now goes into the
+  path verbatim. Wildcard names were never affected — `encodeURIComponent`
+  leaves `*` alone.
+
+### Changed
+
+- `rrsetPath()` validates the segments it is handed instead of escaping them.
+  The character set — `[A-Za-z0-9@*._-]`, no slash, no percent sign, no bare `.`
+  or `..` — was always what kept a request inside the intended endpoint;
+  `encodeURIComponent` had nothing left to escape on top of it except the one
+  character it broke. That guard used to live only at the tool boundary and is
+  now re-checked where the path is built, so a future call site cannot skip it.
+- `list_rrsets` now documents that its `name` filter accepts `@` for the zone
+  apex. The filter always worked — it is a query parameter, not a path segment —
+  but nothing said so.
+
 ## [0.3.1] - 2026-08-18
 
 ### Fixed

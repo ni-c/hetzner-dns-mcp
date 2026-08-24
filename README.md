@@ -214,7 +214,7 @@ setup.
 
 - Tools carry MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) so hosts can apply appropriate permission policies.
 - `HETZNER_API_BASE_URL` must be an `https` URL (`http` is only accepted for localhost) and must not contain credentials; a warning is printed when a non-default host is configured, because the API token is sent there.
-- Zone identifiers and RRSet names are validated against a strict character set and cannot escape the API path; requests never follow redirects, so the Bearer header cannot be replayed elsewhere.
+- Zone identifiers and RRSet names are validated against a strict character set — no slashes, no percent signs, no bare `.` or `..` — so a request cannot escape the intended API path; requests never follow redirects, so the Bearer header cannot be replayed elsewhere.
 - TSIG keys passed to `create_zone`/`change_primary_nameservers` become part of the conversation context and client transcripts — treat them as secrets and rotate them if in doubt.
 - Hetzner-side resource protection is honored: protected zones/RRSets return an error with a hint to the corresponding `change_*_protection` tool.
 

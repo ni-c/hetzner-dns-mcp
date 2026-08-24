@@ -124,8 +124,13 @@ Within that envelope:
 
 - **Path escape is impossible.** Zone identifiers match
   `^(?!\.\.?$)[A-Za-z0-9._-]+$` and RRSet names additionally allow `@` and `*`.
-  No slashes, no bare `.` or `..` segment, and every value is
-  `encodeURIComponent`-ed on top.
+  No slashes, no percent signs, no bare `.` or `..` segment. Every character
+  that survives that is one RFC 3986 permits in a path segment unescaped, so
+  the RRSet name and type go into the URL verbatim — the character set, not an
+  escaping pass, is what keeps a request inside the intended endpoint, and
+  `rrsetPath()` re-validates both where it builds the path rather than trusting
+  the tool boundary. Percent-escaping the name is what previously made apex
+  records unreachable: the API does not decode `%40` back to `@` in a path.
 - **Redirects are refused.** `redirect: 'error'` means the `Authorization`
   header is never replayed against a host the API redirected to.
 - **Every request has a 30-second timeout.**

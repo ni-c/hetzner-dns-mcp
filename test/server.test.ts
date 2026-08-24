@@ -4,6 +4,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Config } from '../src/config.js';
+import { rrsetPath } from '../src/schema.js';
 import { createServer } from '../src/server.js';
 
 const config: Config = {
@@ -546,7 +547,7 @@ describe('confirmation tokens', () => {
 });
 
 describe('set_records', () => {
-  it('posts to the set_records action and URL-encodes the RRSet name', async () => {
+  it('posts to the set_records action and leaves the apex name unescaped', async () => {
     const calls = stubFetch((_url, init) =>
       init?.method === 'POST'
         ? jsonResponse({ action: {} }, 201)
@@ -572,12 +573,84 @@ describe('set_records', () => {
 
     const post = calls.find((c) => c.init?.method === 'POST');
     expect(post?.url).toBe(
-      'https://api.hetzner.test/v1/zones/example.com/rrsets/%40/TXT/actions/set_records'
+      'https://api.hetzner.test/v1/zones/example.com/rrsets/@/TXT/actions/set_records'
     );
     expect(JSON.parse(String(post?.init?.body))).toEqual({
       records: [{ value: '"v=spf1 -all"' }],
     });
   });
+});
+
+describe('zone apex', () => {
+  // encodeURIComponent turned "@" into "%40", which the API answers with 404
+  // not_found while list_rrsets shows the RRSet — the apex was unreachable
+  // through every tool that puts the name into the path.
+  const apex = { zone: 'example.com', name: '@', type: 'A' };
+  const base = 'https://api.hetzner.test/v1/zones/example.com/rrsets/@/A';
+  const records = [{ value: '198.51.100.1' }];
+
+  const cases = [
+    { tool: 'get_rrset', args: {}, url: base },
+    { tool: 'update_rrset', args: { labels: { env: 'prod' } }, url: base },
+    { tool: 'delete_rrset', args: {}, url: base, confirmed: true },
+    {
+      tool: 'set_records',
+      args: { records },
+      url: `${base}/actions/set_records`,
+      confirmed: true,
+    },
+    {
+      tool: 'add_records',
+      args: { records },
+      url: `${base}/actions/add_records`,
+    },
+    {
+      tool: 'remove_records',
+      args: { records },
+      url: `${base}/actions/remove_records`,
+      confirmed: true,
+    },
+    {
+      tool: 'change_rrset_ttl',
+      args: { ttl: 300 },
+      url: `${base}/actions/change_ttl`,
+    },
+    {
+      tool: 'change_rrset_protection',
+      args: { change: false },
+      url: `${base}/actions/change_protection`,
+      confirmed: true,
+    },
+  ];
+
+  it.each(cases)(
+    'addresses the apex RRSet literally in $tool',
+    async ({ tool, args, url, confirmed }) => {
+      const calls = stubFetch((_url, init) =>
+        init?.method === 'GET'
+          ? jsonResponse({ rrset: { records: [], ttl: 300 } })
+          : jsonResponse({ action: {} }, 201)
+      );
+      const client = await connectClient();
+      const callArgs = { ...apex, ...args };
+
+      let result = (await client.callTool({
+        name: tool,
+        arguments: callArgs,
+      })) as CallToolResult;
+      if (confirmed === true) {
+        result = (await client.callTool({
+          name: tool,
+          arguments: { ...callArgs, confirmToken: tokenFrom(result) },
+        })) as CallToolResult;
+      }
+
+      expect(result.isError).toBeUndefined();
+      expect(calls.at(-1)?.url).toBe(url);
+      // Also covers the summary lookup the refusal makes, which used the same path.
+      expect(calls.every((c) => !c.url.includes('%40'))).toBe(true);
+    }
+  );
 });
 
 describe('remove_records', () => {
@@ -710,6 +783,32 @@ describe('input validation', () => {
 
     expect(result.isError).toBe(true);
     expect(calls).toHaveLength(0);
+  });
+
+  it('rejects a percent sign in an RRSet name', async () => {
+    // Nothing escapes the name any more, so a "%" in the path would let the
+    // caller do the decoding: "%2e%2e" would arrive at the API as "..".
+    const calls = stubFetch(() => jsonResponse({}));
+    const client = await connectClient();
+
+    const result = (await client.callTool({
+      name: 'get_rrset',
+      arguments: { zone: 'example.com', name: '%2e%2e', type: 'A' },
+    })) as CallToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('rrsetPath', () => {
+  it('passes the safe character set through and refuses anything else', () => {
+    expect(rrsetPath('@', 'A')).toBe('/@/A');
+    expect(rrsetPath('*', 'TXT')).toBe('/*/TXT');
+    // The tool boundary already rejects these; the helper re-checks because it
+    // no longer escapes what it is handed.
+    expect(() => rrsetPath('../..', 'A')).toThrow();
+    expect(() => rrsetPath('www', 'EVIL')).toThrow();
   });
 });
 

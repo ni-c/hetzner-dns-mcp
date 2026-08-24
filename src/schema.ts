@@ -94,7 +94,27 @@ export const confirmToken = z
     'Confirmation token from the previous call of this same tool with identical arguments. Omit on the first call — the server then returns a token that is valid for a few minutes.'
   );
 
-/** Builds the URL path segment for an RRSet, e.g. `/www/A`. */
+/**
+ * Builds the URL path segment for an RRSet, e.g. `/www/A`.
+ *
+ * The segments are not escaped. RFC 3986 lets a path segment contain `@`, and
+ * the Hetzner Cloud API does not decode a percent-escaped one: with the apex
+ * RRSet present, `GET /zones/example.com/rrsets/%40/A` answers 404 while
+ * `/@/A` answers 200 — so escaping the apex name made it unreachable. Every
+ * other character `rrsetName` permits (letters, digits, `*`, `.`, `-`, `_`) is
+ * already safe in a path segment, which makes `encodeURIComponent` a no-op
+ * here in every case except the one it broke.
+ *
+ * That puts the whole weight on the character set, so it is re-checked here
+ * rather than trusted from the call site: a `/` or `%` reaching the path would
+ * let the caller do the decoding (`%2e%2e` → `..`).
+ */
 export function rrsetPath(name: string, type: string): string {
-  return `/${encodeURIComponent(name)}/${encodeURIComponent(type)}`;
+  if (
+    !rrsetName.safeParse(name).success ||
+    !rrsetType.safeParse(type).success
+  ) {
+    throw new Error(`Refusing to build a request path from "${name}/${type}".`);
+  }
+  return `/${name}/${type}`;
 }

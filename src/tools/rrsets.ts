@@ -60,7 +60,9 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         name: z
           .string()
           .optional()
-          .describe('Filter RRSets by name, e.g. "www"'),
+          .describe(
+            'Filter RRSets by name, e.g. "www" or "@" for the zone apex'
+          ),
         type: z
           .array(z.enum(RRSET_TYPES))
           .optional()
