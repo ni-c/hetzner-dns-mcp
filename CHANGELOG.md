@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [0.3.3] - 2026-08-26
+
+### Changed
+
+- Whether `HETZNER_API_BASE_URL` counts as local — which decides both whether
+  plain `http` is allowed at all and whether a host other than
+  `api.hetzner.cloud` is accepted — is now decided by the same host classifier
+  the other MCP servers in this family use, in `src/hosts.ts`, instead of a list
+  of three exact spellings. `127.0.0.2`, `sub.localhost`, `localhost.` and
+  `http://[::ffff:127.0.0.1]` are just as local as the three that were listed,
+  and the API token stays on the machine in every one of those cases. The token
+  is still refused over plain `http` to anything that is not.
+
 ## [0.3.2] - 2026-08-24
 
 ### Fixed
