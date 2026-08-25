@@ -1,3 +1,4 @@
+import { internalHostKind } from './hosts.js';
 export interface Config {
   /**
    * Hetzner Cloud API token of the project that holds the DNS zones.
@@ -24,8 +25,6 @@ export const MISSING_TOKEN_MESSAGE =
 const DEFAULT_BASE_URL = 'https://api.hetzner.cloud/v1';
 const DEFAULT_HOST = 'api.hetzner.cloud';
 
-const LOCAL_HOSTNAMES = ['localhost', '127.0.0.1', '[::1]'];
-
 /**
  * Validates HETZNER_API_BASE_URL. The API token is sent to this URL as a
  * Bearer header, so anything other than https (or http to localhost, for
@@ -43,7 +42,10 @@ function normalizeBaseUrl(raw: string): string {
     );
     process.exit(1);
   }
-  const isLocal = LOCAL_HOSTNAMES.includes(url.hostname);
+  // The shared classifier rather than a list of three spellings: 127.0.0.2,
+  // sub.localhost and http://[::ffff:127.0.0.1] are just as local, and the
+  // token stays on the machine in every one of those cases.
+  const isLocal = internalHostKind(url.hostname) === 'loopback';
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLocal)) {
     console.error(
       'hetzner-dns-mcp: HETZNER_API_BASE_URL must use https ' +
