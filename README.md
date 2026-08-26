@@ -34,8 +34,6 @@ reliably from eight than from twenty-two — see
   </picture>
 </p>
 
-📖 **Full documentation: [hetzner-dns-mcp.ni-c.de](https://hetzner-dns-mcp.ni-c.de)**
-
 ## Requirements
 
 - Node.js ≥ 22
