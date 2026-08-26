@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
-## [Unreleased]
+## [0.4.0] - 2026-08-27
 
 ### Added
 
@@ -32,6 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exact write-tool name in the allow list is refused with a message naming the
   read-only setting instead of calling the tool unknown, while a pattern covering
   write tools is accepted and simply contributes nothing.
+
+### Changed
+
+- The README now carries the same eight badges, in the same order, as every other
+  MCP server in this family, all of them reading from npm rather than hard-coded;
+  the opening follows one shape; and the standalone "Full documentation" line is
+  gone, because the docs badge three lines above it points at the same page.
 
 ### Fixed
 
