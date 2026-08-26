@@ -97,6 +97,47 @@ where `ps` would show it.
 Pin a version rather than tracking `latest` if you care about reproducibility:
 `ghcr.io/ni-c/hetzner-dns-mcp:0.3.0`.
 
+## Through mcp-hub
+
+[mcp-hub](https://mcp-hub.ni-c.de) serves many stdio MCP servers from one
+container behind a single HTTPS endpoint, so hetzner-dns-mcp can be reached from
+clients that cannot spawn a local process — ChatGPT connectors, Claude on the
+web, Cursor — without a container, a hostname and an OAuth stack of its own.
+
+Its `/config/mcp.json` uses Claude Code's format, so the entry is the one you
+already have:
+
+```json
+{
+  "mcpServers": {
+    "hetzner-dns": {
+      "command": "npx",
+      "args": ["-y", "hetzner-dns-mcp"],
+      "env": {
+        "HETZNER_API_TOKEN": "your-token",
+        "HETZNER_ALLOW_TOOLS": "essential"
+      },
+      "denyTools": ["delete_*"]
+    }
+  }
+}
+```
+
+`allowTools` and `denyTools` are the hub's **own** per-server filter and take
+exact tool names or `list_*` prefixes — the same syntax as the two environment
+variables above, so a list moves between them verbatim. What does **not** move
+is `essential`: that preset is a hetzner-dns-mcp feature, so it belongs in `env`
+as shown. `"allowTools": ["essential"]` would be a name the hub cannot resolve.
+
+The two compose, and it is worth knowing which does what: the server registers
+what its environment variables allow, and the hub exposes what its arrays allow.
+Filtering in the server is the tighter of the two — the tool is never built.
+
+Register `https://your-host/hetzner-dns/mcp` as a connector and you get this
+server alone. Register the hub's `/hub` endpoint instead and you reach _every_
+server behind it through six meta-tools, which is the answer worth having once
+you run several of these at once.
+
 ## From source
 
 ```bash

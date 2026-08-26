@@ -23,8 +23,8 @@ features:
     details: Deleting a zone or replacing a record set is refused on the first call and answered with a random, single-use token — one that exists only in a previous tool result, so nothing hidden inside a DNS record can produce it.
   - title: Nothing upstream is trusted
     details: Record values, comments and zone files come back wrapped as untrusted data, secret-looking keys are redacted, oversized values are truncated and HTML error pages are dropped instead of pasted into the context.
-  - title: Read-only when you want it
-    details: HETZNER_READ_ONLY=true registers the seven read tools and nothing else — the write tools do not exist on the protocol, rather than failing when called.
+  - title: Only the tools you want
+    details: HETZNER_READ_ONLY=true registers the seven read tools and nothing else. HETZNER_ALLOW_TOOLS cuts finer — essential for a curated eight, your own comma-separated list, or a whole family with list_* — and HETZNER_DENY_TOOLS subtracts. Whatever is filtered out does not exist on the protocol rather than failing when called, and a name that matches no tool stops the server at startup instead of quietly going missing.
 ---
 
 ## The two-step flow, in 15 seconds

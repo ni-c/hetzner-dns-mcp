@@ -10,6 +10,15 @@ export interface Config {
   baseUrl: string;
   /** When true, only the read-only tools are registered at all. */
   readOnly: boolean;
+  /**
+   * Raw value of `HETZNER_ALLOW_TOOLS` — comma-separated tool names, `list_*`
+   * prefixes, or `essential`. Kept unparsed on purpose: this file is a mirror
+   * of the environment, and the names can only be checked against the tool
+   * catalogue, which `buildToolFilter` does.
+   */
+  allowTools: string | undefined;
+  /** Raw value of `HETZNER_DENY_TOOLS`, same shape, subtracted from the above. */
+  denyTools: string | undefined;
 }
 
 /** Shown when HETZNER_API_TOKEN is missing — on startup and on every API call. */
@@ -20,7 +29,9 @@ export const MISSING_TOKEN_MESSAGE =
   'Note: tokens from the old DNS Console (dns.hetzner.com) do not work — that API\n' +
   'was shut down in May 2026.\n' +
   'Optional: HETZNER_API_BASE_URL (default: https://api.hetzner.cloud/v1)\n' +
-  'Optional: HETZNER_READ_ONLY=true to expose only the read-only tools';
+  'Optional: HETZNER_READ_ONLY=true to expose only the read-only tools\n' +
+  'Optional: HETZNER_ALLOW_TOOLS / HETZNER_DENY_TOOLS to narrow the tool list\n' +
+  '          (comma-separated names, "list_*" prefixes, or "essential")';
 
 const DEFAULT_BASE_URL = 'https://api.hetzner.cloud/v1';
 const DEFAULT_HOST = 'api.hetzner.cloud';
@@ -104,5 +115,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         ? normalizeBaseUrl(rawBaseUrl)
         : DEFAULT_BASE_URL,
     readOnly,
+    allowTools: env.HETZNER_ALLOW_TOOLS,
+    denyTools: env.HETZNER_DENY_TOOLS,
   };
 }

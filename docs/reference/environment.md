@@ -1,6 +1,6 @@
 # Environment variables
 
-Three variables, all read once at startup. There is no config file.
+Five variables, all read once at startup. There is no config file.
 
 ## `HETZNER_API_TOKEN`
 
@@ -57,6 +57,56 @@ The value is never printed back on a parse failure — a malformed URL can still
 contain a `user:token@` part, and startup messages end up in client logs.
 
 Also deleted from `process.env` once read.
+
+## `HETZNER_ALLOW_TOOLS`
+
+**Optional**, unset by default — then every tool the mode allows is registered.
+
+A comma-separated list of entries. Each entry is either an exact tool name or a
+prefix followed by a single trailing `*`:
+
+| Value                   | Registers                                        |
+| ----------------------- | ------------------------------------------------ |
+| `essential`             | the curated preset of eight (below)              |
+| `list_zones,get_zone`   | exactly those two                                |
+| `list_*`                | `list_rrsets`, `list_zone_actions`, `list_zones` |
+| `essential,update_zone` | the preset plus one more                         |
+| `*`                     | everything — the same as leaving it unset        |
+
+The preset is:
+
+`list_zones` · `get_zone` · `list_rrsets` · `get_rrset` · `create_rrset` ·
+`set_records` · `delete_rrset` · `export_zonefile`
+
+Entries are trimmed and matched case-insensitively; empty entries are ignored,
+and a value that is empty or only whitespace counts as unset — `HETZNER_ALLOW_TOOLS=`
+in a compose file does not mean "allow nothing".
+
+**An entry that matches no tool aborts startup**, naming the entry and listing
+the valid names. So does a malformed pattern such as `*_zone` or `list_*_x`,
+where the `*` is not the last character. The alternative — ignoring the entry —
+leaves a tool missing from `tools/list` with nothing pointing at the cause.
+
+Under `HETZNER_READ_ONLY`, an exact write-tool name here is an error naming the
+read-only setting rather than "unknown tool"; a _pattern_ covering write tools
+is accepted and merely contributes nothing, with a warning on stderr.
+
+## `HETZNER_DENY_TOOLS`
+
+**Optional**, unset by default. Same syntax as `HETZNER_ALLOW_TOOLS`, minus the
+`essential` keyword.
+
+Subtracted from whatever `HETZNER_ALLOW_TOOLS` selected — or from every tool, if
+that one is unset. `HETZNER_DENY_TOOLS=delete_zone,import_zonefile` is the usual
+shape: keep everything, drop the two that cannot be undone.
+
+A deny entry that matches no tool aborts startup, on the same reasoning. It may
+match tools that are already absent — denying a write tool while
+`HETZNER_READ_ONLY` is set is how a defensive list is written, and is not an
+error.
+
+If both lists remove everything, the server refuses to start rather than
+offering an empty tool list.
 
 ## Not configurable
 

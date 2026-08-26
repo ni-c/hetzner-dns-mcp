@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { HetznerApi } from './api.js';
 import type { Config } from './config.js';
 import { ConfirmationStore } from './confirm.js';
+import { buildToolFilter, installToolFilter } from './tool-filter.js';
 import type { ToolContext } from './tools/context.js';
 import { registerActionTools } from './tools/actions.js';
 import { registerRrsetTools } from './tools/rrsets.js';
@@ -21,6 +22,10 @@ function packageVersion(): string {
 }
 
 export function createServer(config: Config): McpServer {
+  // Before anything is built: an unusable tool list should fail on the way in,
+  // not leave a server running with tools quietly missing.
+  const filter = buildToolFilter(config);
+
   const ctx: ToolContext = {
     api: new HetznerApi(config),
     // One store per server: the tokens it hands out are only ever valid for
@@ -33,6 +38,8 @@ export function createServer(config: Config): McpServer {
     name: 'hetzner-dns-mcp',
     version: packageVersion(),
   });
+
+  installToolFilter(server, filter);
 
   registerZoneTools(server, ctx);
   registerRrsetTools(server, ctx);

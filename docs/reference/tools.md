@@ -4,6 +4,11 @@
 `HETZNER_READ_ONLY=true`; tools marked **needs `confirmToken`** refuse their
 first call and return a token (see [Security](/guide/security#confirmation-tokens)).
 
+All 22 are registered unless you say otherwise. `HETZNER_ALLOW_TOOLS` and
+`HETZNER_DENY_TOOLS` narrow the list to the ones you want, and `essential`
+selects a curated eight — see
+[choosing the tools that load](/guide/configuration#choosing-the-tools-that-load).
+
 Shared argument types:
 
 | Argument           | Type                                                                                                              |

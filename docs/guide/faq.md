@@ -59,6 +59,23 @@ Node ≥ 22 on `PATH`, `npx` blocked by a corporate proxy, or a typo in the
 command. Try running the same command by hand — it should print a line to
 stderr and then wait silently for JSON-RPC on stdin.
 
+## One tool I expected is missing
+
+Something narrowed the list. In order of likelihood:
+
+- `HETZNER_READ_ONLY` is set, and it is a write tool. `tools/list` returns seven.
+- `HETZNER_ALLOW_TOOLS` is set and does not name it — remember that it is an
+  allow list, so anything not named is out.
+- `HETZNER_DENY_TOOLS` names it, possibly through a prefix such as `delete_*`.
+
+A filtered tool is not registered at all, so it is missing from `tools/list` and
+answers `tools/call` with "tool not found" — the same as a write tool under
+read-only. There is no state where it is hidden but still callable.
+
+What it is _not_ is a typo in one of those variables: an entry that matches no
+tool stops the server at startup and says which entry it was. See
+[choosing the tools that load](/guide/configuration#choosing-the-tools-that-load).
+
 ## Can I stop it from changing anything?
 
 Yes, two independent ways, best used together:
@@ -72,6 +89,9 @@ Yes, two independent ways, best used together:
 
 Read-only mode never registers the write tools, and a read-only token means the
 API would refuse them anyway. See [Configuration](/guide/configuration#read-only-mode).
+
+To cut further than "no writes" — say, five tools rather than seven — add
+`HETZNER_ALLOW_TOOLS`; the two combine.
 
 ## Why is a result wrapped in `<untrusted-data>`?
 

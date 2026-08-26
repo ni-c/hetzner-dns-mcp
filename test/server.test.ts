@@ -6,11 +6,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../src/config.js';
 import { rrsetPath } from '../src/schema.js';
 import { createServer } from '../src/server.js';
+import { ALL_TOOLS, READ_TOOLS } from '../src/tools/catalogue.js';
 
 const config: Config = {
   token: 'test-token',
   baseUrl: 'https://api.hetzner.test/v1',
   readOnly: false,
+  allowTools: undefined,
+  denyTools: undefined,
 };
 
 type FetchCall = { url: string; init: RequestInit | undefined };
@@ -81,35 +84,16 @@ afterEach(() => {
 });
 
 describe('tool registration', () => {
+  // The names themselves are written out once, in src/tools/catalogue.ts —
+  // the tool filter has to know them before anything is registered, so that
+  // file is the hand-maintained list and this is the check that it is honest.
   it('exposes all expected tools', async () => {
     stubFetch(() => jsonResponse({}));
     const client = await connectClient();
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual([
-      'add_records',
-      'change_primary_nameservers',
-      'change_rrset_protection',
-      'change_rrset_ttl',
-      'change_zone_protection',
-      'change_zone_ttl',
-      'create_rrset',
-      'create_zone',
-      'delete_rrset',
-      'delete_zone',
-      'export_zonefile',
-      'get_rrset',
-      'get_zone',
-      'get_zone_action',
-      'import_zonefile',
-      'list_rrsets',
-      'list_zone_actions',
-      'list_zones',
-      'remove_records',
-      'set_records',
-      'update_rrset',
-      'update_zone',
-    ]);
+    expect(names).toEqual([...ALL_TOOLS].sort());
+    expect(names).toHaveLength(22);
   });
 
   it('marks destructive and read-only tools accordingly', async () => {
@@ -141,15 +125,8 @@ describe('read-only mode', () => {
     stubFetch(() => jsonResponse({}));
     const client = await connectClient(readOnly);
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual([
-      'export_zonefile',
-      'get_rrset',
-      'get_zone',
-      'get_zone_action',
-      'list_rrsets',
-      'list_zone_actions',
-      'list_zones',
-    ]);
+    expect(tools.map((t) => t.name).sort()).toEqual([...READ_TOOLS].sort());
+    expect(tools).toHaveLength(7);
     expect(tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
   });
 
