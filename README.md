@@ -13,6 +13,11 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for man
 
 Lets MCP clients like Claude Code, Claude Desktop or Codex manage your Hetzner DNS: list, create, update and delete zones and RRSets (record sets), import/export zone files, manage protection and TTLs, and track asynchronous zone actions.
 
+Twenty-two tools is the ceiling, not the floor: `HETZNER_ALLOW_TOOLS=essential`
+registers a curated eight instead, and a model picks the right tool far more
+reliably from eight than from twenty-two — see
+[choosing which tools load](#choosing-which-tools-load).
+
 > **Note:** This server targets the current DNS API that is part of the **Hetzner Cloud API** (`api.hetzner.cloud`). The legacy DNS API (`dns.hetzner.com`) was shut down in May 2026 and is not supported.
 
 ![Demo: listing the tools, a refused set_records call, and the same call succeeding with the confirmation token it returned](https://hetzner-dns-mcp.ni-c.de/demo.gif)
@@ -40,18 +45,45 @@ Lets MCP clients like Claude Code, Claude Desktop or Codex manage your Hetzner D
 
 Configuration is provided via environment variables:
 
-| Variable               | Required | Description                                                               |
-| ---------------------- | -------- | ------------------------------------------------------------------------- |
-| `HETZNER_API_TOKEN`    | yes      | Hetzner Cloud API token (project-scoped)                                  |
-| `HETZNER_READ_ONLY`    | no       | `true` registers only the read tools; the write tools do not exist at all |
-| `HETZNER_API_BASE_URL` | no       | Base URL of the API (default: `https://api.hetzner.cloud/v1`)             |
+| Variable               | Required | Description                                                                        |
+| ---------------------- | -------- | ---------------------------------------------------------------------------------- |
+| `HETZNER_API_TOKEN`    | yes      | Hetzner Cloud API token (project-scoped)                                           |
+| `HETZNER_READ_ONLY`    | no       | `true` registers only the read tools; the write tools do not exist at all          |
+| `HETZNER_ALLOW_TOOLS`  | no       | Comma-separated tool names, `list_*` prefixes, or `essential` for a curated preset |
+| `HETZNER_DENY_TOOLS`   | no       | Same syntax; removed from whatever `HETZNER_ALLOW_TOOLS` left                      |
+| `HETZNER_API_BASE_URL` | no       | Base URL of the API (default: `https://api.hetzner.cloud/v1`)                      |
 
 Without a token the server still starts and lists its tools (so registries and
 inspectors can introspect it), but every tool call fails with setup
 instructions instead of reaching the API.
 
-All three variables are deleted from the process environment once they have
-been read, so a later crash report or diagnostic dump cannot expose the token.
+`HETZNER_API_TOKEN` and `HETZNER_API_BASE_URL` are deleted from the process
+environment once they have been read, so a later crash report or diagnostic
+dump cannot expose the token.
+
+### Choosing which tools load
+
+`HETZNER_ALLOW_TOOLS` and `HETZNER_DENY_TOOLS` take comma-separated tool names;
+a trailing `*` matches a whole family. `essential` is a curated preset —
+`list_zones`, `get_zone`, `list_rrsets`, `get_rrset`, `create_rrset`,
+`set_records`, `delete_rrset` and `export_zonefile` — which covers reading a
+zone and changing a record without the rare, catastrophic tools.
+
+```sh
+HETZNER_ALLOW_TOOLS=essential
+HETZNER_ALLOW_TOOLS=list_*,get_zone,set_records
+HETZNER_DENY_TOOLS=delete_zone,import_zonefile
+```
+
+An entry that matches no tool aborts startup and names it, so a typo cannot
+silently hide a tool — an absent tool is not something anyone traces back to an
+environment variable. A filtered tool is never registered, so it is absent from
+`tools/list` and unknown to `tools/call` alike, exactly like a write tool under
+`HETZNER_READ_ONLY`.
+
+If you run several of these servers at once, [mcp-hub](https://mcp-hub.ni-c.de)
+is the other answer — its `/hub` endpoint replaces every server's tools with six
+meta-tools.
 
 ## Installation
 

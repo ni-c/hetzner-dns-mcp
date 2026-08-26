@@ -32,6 +32,18 @@
           "format": "boolean"
         },
         {
+          "name": "HETZNER_ALLOW_TOOLS",
+          "description": "Comma-separated tool names or list_* prefixes to register; 'essential' selects a curated preset (default: all tools)",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "HETZNER_DENY_TOOLS",
+          "description": "Comma-separated tool names or list_* prefixes to remove from whatever HETZNER_ALLOW_TOOLS left",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
           "name": "HETZNER_API_BASE_URL",
           "description": "Override the Hetzner Cloud API base URL (default: https://api.hetzner.cloud/v1)",
           "isRequired": false,
@@ -58,6 +70,18 @@
           "description": "Set to true to register only the read-only tools (default: false)",
           "isRequired": false,
           "format": "boolean"
+        },
+        {
+          "name": "HETZNER_ALLOW_TOOLS",
+          "description": "Comma-separated tool names or list_* prefixes to register; 'essential' selects a curated preset (default: all tools)",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "HETZNER_DENY_TOOLS",
+          "description": "Comma-separated tool names or list_* prefixes to remove from whatever HETZNER_ALLOW_TOOLS left",
+          "isRequired": false,
+          "format": "string"
         },
         {
           "name": "HETZNER_API_BASE_URL",
