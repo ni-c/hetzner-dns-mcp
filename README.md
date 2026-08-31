@@ -255,7 +255,7 @@ setup.
 npm install
 npm run build     # compile TypeScript to dist/
 npm test          # run the vitest test suite
-npm run lint      # eslint + prettier check
+npm run lint      # oxlint + prettier check
 ```
 
 ### Releasing
