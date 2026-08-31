@@ -1,9 +1,5 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-
-import type { HetznerApi } from '../api.js';
-import { fingerprint } from '../confirm.js';
-import { errorResult, jsonResult, run } from '../result.js';
 import {
   RRSET_TYPES,
   confirmToken,
@@ -17,6 +13,10 @@ import {
   ttl,
   zone,
 } from '../schema.js';
+
+import type { HetznerApi } from '../api.js';
+import { fingerprint } from '../confirm.js';
+import { errorResult, jsonResult, run } from '../result.js';
 import type { ToolContext } from './context.js';
 
 /**
@@ -55,7 +55,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       title: 'List RRSets',
       description:
         'List the RRSets (DNS record sets) of a zone, including their records, TTLs and protection status.',
-      inputSchema: {
+      inputSchema: z.object({
         zone,
         name: z
           .string()
@@ -73,7 +73,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
           .describe('Filter RRSets by label selector'),
         page,
         per_page: perPage,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     ({ zone, name, type, label_selector, page, per_page }) =>
@@ -96,7 +96,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       title: 'Get RRSet',
       description:
         'Get a single RRSet (DNS record set) of a zone by name and type.',
-      inputSchema: { zone, name: rrsetName, type: rrsetType },
+      inputSchema: z.object({ zone, name: rrsetName, type: rrsetType }),
       annotations: { readOnlyHint: true },
     },
     ({ zone, name, type }) =>
@@ -117,7 +117,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       title: 'Create RRSet',
       description:
         'Create a new RRSet (DNS record set) in a zone, e.g. an A record for "www". Fails if an RRSet with the same name and type already exists — use set_records or add_records in that case.',
-      inputSchema: {
+      inputSchema: z.object({
         zone,
         name: rrsetName,
         type: rrsetType,
@@ -128,7 +128,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
             "Time To Live in seconds. If omitted, the zone's default TTL applies."
           ),
         labels: labels.optional(),
-      },
+      }),
       annotations: {},
     },
     ({ zone, name, type, records, ttl, labels }) =>
@@ -151,7 +151,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       title: 'Update RRSet labels',
       description:
         'Update the labels of an RRSet. The given set replaces all existing labels. (Records and TTL are changed via set_records/add_records/remove_records and change_rrset_ttl.)',
-      inputSchema: { zone, name: rrsetName, type: rrsetType, labels },
+      inputSchema: z.object({ zone, name: rrsetName, type: rrsetType, labels }),
       annotations: { idempotentHint: true },
     },
     ({ zone, name, type, labels }) =>
@@ -171,12 +171,12 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       title: 'Delete RRSet',
       description:
         'Permanently delete an RRSet (DNS record set) with all its records. This is irreversible. The first call returns a short-lived confirmation token; ask the user, then call again with confirmToken.',
-      inputSchema: {
+      inputSchema: z.object({
         zone,
         name: rrsetName,
         type: rrsetType,
         confirmToken,
-      },
+      }),
       annotations: { destructiveHint: true },
     },
     ({ zone, name, type, confirmToken }) =>
@@ -204,13 +204,13 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       title: 'Set records of an RRSet',
       description:
         'Replace ALL records of an RRSet with the given records. Existing records not listed are removed. Use add_records to append instead. The first call returns a short-lived confirmation token bound to exactly this record list.',
-      inputSchema: {
+      inputSchema: z.object({
         zone,
         name: rrsetName,
         type: rrsetType,
         records,
         confirmToken,
-      },
+      }),
       annotations: { destructiveHint: true },
     },
     ({ zone, name, type, records, confirmToken }) =>
@@ -241,7 +241,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       title: 'Add records to an RRSet',
       description:
         'Add records to an RRSet. Existing records are kept. Creates the RRSet if it does not exist yet.',
-      inputSchema: {
+      inputSchema: z.object({
         zone,
         name: rrsetName,
         type: rrsetType,
@@ -251,7 +251,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
           .describe(
             "Time To Live in seconds. If omitted, the zone's default TTL applies."
           ),
-      },
+      }),
       annotations: {},
     },
     ({ zone, name, type, records, ttl }) =>
@@ -271,13 +271,13 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       title: 'Remove records from an RRSet',
       description:
         'Remove specific records (matched by value) from an RRSet. Removing the last record deletes the RRSet. The first call returns a short-lived confirmation token bound to exactly this record list.',
-      inputSchema: {
+      inputSchema: z.object({
         zone,
         name: rrsetName,
         type: rrsetType,
         records,
         confirmToken,
-      },
+      }),
       annotations: { destructiveHint: true },
     },
     ({ zone, name, type, records, confirmToken }) =>
@@ -306,7 +306,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       title: 'Change RRSet TTL',
       description:
         "Change the Time To Live (TTL) of an RRSet. Pass null to fall back to the zone's default TTL.",
-      inputSchema: {
+      inputSchema: z.object({
         zone,
         name: rrsetName,
         type: rrsetType,
@@ -315,7 +315,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
           .describe(
             "Time To Live in seconds, or null to use the zone's default TTL"
           ),
-      },
+      }),
       annotations: { idempotentHint: true },
     },
     ({ zone, name, type, ttl }) =>
@@ -335,7 +335,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       title: 'Change RRSet protection',
       description:
         'Enable or disable the change protection of an RRSet. Enabling is immediate; DISABLING removes the last safeguard against delete_rrset and set_records and therefore needs a confirmToken.',
-      inputSchema: {
+      inputSchema: z.object({
         zone,
         name: rrsetName,
         type: rrsetType,
@@ -345,7 +345,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
             'true to protect the RRSet from changes and deletion, false to unprotect'
           ),
         confirmToken,
-      },
+      }),
       annotations: { idempotentHint: true },
     },
     ({ zone, name, type, change, confirmToken }) =>

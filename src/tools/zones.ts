@@ -1,4 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 import type { HetznerApi } from '../api.js';
@@ -63,7 +63,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       title: 'List DNS zones',
       description:
         'List the DNS zones of the Hetzner Cloud project, including status, mode, default TTL, assigned nameservers and record counts.',
-      inputSchema: {
+      inputSchema: z.object({
         name: z
           .string()
           .optional()
@@ -78,7 +78,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
           .describe('Filter zones by label selector, e.g. "env=prod"'),
         page,
         per_page: perPage,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     ({ name, mode, label_selector, page, per_page }) =>
@@ -100,7 +100,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Get DNS zone',
       description: 'Get the full details of a single DNS zone.',
-      inputSchema: { zone },
+      inputSchema: z.object({ zone }),
       annotations: { readOnlyHint: true },
     },
     ({ zone }) =>
@@ -115,7 +115,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       title: 'Export zone file',
       description:
         'Export the full contents of a DNS zone as a zone file (BIND format).',
-      inputSchema: { zone },
+      inputSchema: z.object({ zone }),
       annotations: { readOnlyHint: true },
     },
     ({ zone }) =>
@@ -135,7 +135,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       title: 'Create DNS zone',
       description:
         'Create a new DNS zone. Use mode "primary" for zones managed at Hetzner, or "secondary" with primary_nameservers to transfer the zone from external primaries. A primary zone can optionally be initialized from a zone file.',
-      inputSchema: {
+      inputSchema: z.object({
         name: z
           .string()
           .min(1)
@@ -154,7 +154,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
           .describe(
             'Zone file (BIND format) to initialize a primary zone with. Ignored for secondary zones.'
           ),
-      },
+      }),
       annotations: {},
     },
     ({ name, mode, ttl, labels, primary_nameservers, zonefile }) =>
@@ -178,7 +178,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       title: 'Update DNS zone labels',
       description:
         'Update the labels of a DNS zone. The given set replaces all existing labels. (Other zone properties are changed via the dedicated change_zone_* tools.)',
-      inputSchema: { zone, labels },
+      inputSchema: z.object({ zone, labels }),
       annotations: { idempotentHint: true },
     },
     ({ zone, labels }) =>
@@ -195,7 +195,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       title: 'Delete DNS zone',
       description:
         'Permanently delete a DNS zone including all its records. This is irreversible. The first call returns a short-lived confirmation token; ask the user, then call again with confirmToken.',
-      inputSchema: { zone, confirmToken },
+      inputSchema: z.object({ zone, confirmToken }),
       annotations: { destructiveHint: true },
     },
     ({ zone, confirmToken }) =>
@@ -221,11 +221,11 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       title: 'Import zone file',
       description:
         'Import a zone file (BIND format) into an existing primary zone. This REPLACES the current records of the zone. The first call returns a short-lived confirmation token bound to exactly this zone file; ask the user, then call again with confirmToken. Consider export_zonefile first as a backup.',
-      inputSchema: {
+      inputSchema: z.object({
         zone,
         zonefile: z.string().min(1).describe('Zone file content to import'),
         confirmToken,
-      },
+      }),
       annotations: { destructiveHint: true },
     },
     ({ zone, zonefile, confirmToken }) =>
@@ -256,7 +256,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       title: 'Change zone default TTL',
       description:
         'Change the default Time To Live (TTL) of a DNS zone. Applies to RRSets without an explicit TTL.',
-      inputSchema: { zone, ttl },
+      inputSchema: z.object({ zone, ttl }),
       annotations: { idempotentHint: true },
     },
     ({ zone, ttl }) =>
@@ -276,7 +276,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       title: 'Change zone protection',
       description:
         'Enable or disable the delete protection of a DNS zone. Enabling is immediate; DISABLING removes the last safeguard against delete_zone and therefore needs a confirmToken, exactly like a deletion.',
-      inputSchema: {
+      inputSchema: z.object({
         zone,
         delete: z
           .boolean()
@@ -284,7 +284,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
             'true to protect the zone from deletion, false to unprotect'
           ),
         confirmToken,
-      },
+      }),
       annotations: { idempotentHint: true },
     },
     ({ zone, delete: deleteProtection, confirmToken }) =>
@@ -316,11 +316,11 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       title: 'Change primary nameservers',
       description:
         'Replace the primary nameservers of a secondary zone (the servers Hetzner transfers the zone from). The ENTIRE zone content will be taken from the new primaries on the next transfer. Only applicable to zones in secondary mode. The first call returns a short-lived confirmation token bound to exactly this nameserver list.',
-      inputSchema: {
+      inputSchema: z.object({
         zone,
         primary_nameservers: primaryNameservers,
         confirmToken,
-      },
+      }),
       annotations: { destructiveHint: true },
     },
     ({ zone, primary_nameservers, confirmToken }) =>

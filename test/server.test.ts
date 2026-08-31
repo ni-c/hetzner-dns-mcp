@@ -1,6 +1,5 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { CallToolResult } from '@modelcontextprotocol/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Config } from '../src/config.js';
@@ -134,13 +133,15 @@ describe('read-only mode', () => {
     const calls = stubFetch(() => jsonResponse({}));
     const client = await connectClient(readOnly);
 
-    const result = (await client.callTool({
-      name: 'delete_zone',
-      arguments: { zone: 'example.com' },
-    })) as CallToolResult;
-
-    expect(result.isError).toBe(true);
-    expect(resultText(result)).toContain('Tool delete_zone not found');
+    // SDK v2 reports an unknown tool as a JSON-RPC error rather than as a
+    // result carrying isError. Either way the call fails and nothing reaches
+    // the API, which is what this test is about.
+    await expect(
+      client.callTool({
+        name: 'delete_zone',
+        arguments: { zone: 'example.com' },
+      })
+    ).rejects.toThrow('Tool delete_zone not found');
     expect(calls).toHaveLength(0);
   });
 });
