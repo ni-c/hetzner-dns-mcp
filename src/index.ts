@@ -23,6 +23,11 @@ async function main(): Promise<void> {
   console.error(`hetzner-dns-mcp: connected, targeting ${config.baseUrl}`);
 }
 
+// In a container node runs as PID 1 with no default signal disposition, so
+// without this handler `docker stop` waits out the grace period and SIGKILLs.
+process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));
+
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`hetzner-dns-mcp: fatal error: ${message}`);
