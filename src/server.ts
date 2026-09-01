@@ -52,7 +52,10 @@ export function createServer(config: Config): McpServer {
     confirmations: new ConfirmationStore(),
     // One approver per server: it holds the key that seals the request state
     // carried out through the client and back.
-    approval: createApproval({ server: 'hetzner-dns-mcp' }),
+    approval: createApproval({
+      server: 'hetzner-dns-mcp',
+      elicitation: config.elicitation,
+    }),
     readOnly: config.readOnly,
   };
 

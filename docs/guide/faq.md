@@ -24,11 +24,22 @@ The resource is protected on Hetzner's side. Remove the protection with
 confirmation token, because removing protection is treated as destructive — and
 then retry.
 
-## The server keeps refusing my deletion
+## A dialog appeared before my deletion
 
-That is the [confirmation flow](/guide/security#confirmation-tokens) working.
-The first call is always refused and returns a `confirm_token`; the second call
-must repeat the **identical arguments** and include that token.
+That is the [approval flow](/guide/approval) working. Where your client supports
+MCP elicitation, anything irreversible raises a question the model cannot answer
+on its behalf, and nothing happens until you answer it.
+
+## The server keeps refusing my deletion, with a `confirm_token`
+
+That is the **fallback**, for a client that cannot show a dialog. It was once the
+only path; it is not any more. The first call returns a `confirm_token`, and the
+second must repeat the **identical arguments** and include it.
+
+If your client _can_ show dialogs and you are still seeing tokens, check whether
+`ELICITATION` is set to `false` somewhere in the environment — it deliberately
+carries no `HETZNER_` prefix, so it may have been meant for a different server.
+The startup log of this one says so when it is off.
 
 If the second call is refused too, one of these is true:
 

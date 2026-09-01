@@ -162,9 +162,13 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         'Update the labels of an RRSet. The given set replaces all existing labels. (Records and TTL are changed via set_records/add_records/remove_records and change_rrset_ttl.)',
       inputSchema: z.object({ zone, name: rrsetName, type: rrsetType, labels }),
       annotations: {
-        // Replaces the records of an RRSet, exactly like set_records. Both
-        // take a name off the internet if the new list is wrong, and neither
-        // can bring the old records back.
+        // Replaces the labels of an RRSet — not its records. The comment here
+        // used to say "exactly like set_records", which is what put this tool
+        // on a list of things that ought to be guarded: it is not, because no
+        // name goes off the internet. Labels are metadata somebody set, they
+        // are replaced wholesale and Hetzner keeps no history of them, so the
+        // annotation stays destructive; the dialog does not follow, because
+        // the dialog is for what cannot be shrugged off.
         readOnlyHint: false,
         destructiveHint: true,
         idempotentHint: true,

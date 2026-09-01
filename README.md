@@ -30,7 +30,7 @@ reliably from eight than from twenty-two — see
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://hetzner-dns-mcp.ni-c.de/architecture-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="https://hetzner-dns-mcp.ni-c.de/architecture-light.svg">
-    <img src="https://hetzner-dns-mcp.ni-c.de/architecture.svg" alt="An MCP client speaks stdio to hetzner-dns-mcp, which validates arguments, gates destructive calls behind a confirmation token, and calls the Hetzner Cloud API over HTTPS" width="800">
+    <img src="https://hetzner-dns-mcp.ni-c.de/architecture.svg" alt="An MCP client speaks stdio to hetzner-dns-mcp, which validates arguments, puts destructive calls to a person first, and calls the Hetzner Cloud API over HTTPS" width="800">
   </picture>
 </p>
 
@@ -49,6 +49,7 @@ Configuration is provided via environment variables:
 | `HETZNER_READ_ONLY`    | no       | `true` registers only the read tools; the write tools do not exist at all          |
 | `HETZNER_ALLOW_TOOLS`  | no       | Comma-separated tool names, `list_*` prefixes, or `essential` for a curated preset |
 | `HETZNER_DENY_TOOLS`   | no       | Same syntax; removed from whatever `HETZNER_ALLOW_TOOLS` left                      |
+| `ELICITATION`          | no       | `false` replaces the approval dialog with the two-call token. **Not prefixed**     |
 | `HETZNER_API_BASE_URL` | no       | Base URL of the API (default: `https://api.hetzner.cloud/v1`)                      |
 
 Without a token the server still starts and lists its tools (so registries and
@@ -169,33 +170,36 @@ exposed):
 
 ### Zones
 
-| Tool                         | Description                                                              |
-| ---------------------------- | ------------------------------------------------------------------------ |
-| `list_zones`                 | List zones with status, mode, nameservers and record counts              |
-| `get_zone`                   | Get the full details of a single zone                                    |
-| `create_zone`                | Create a primary or secondary zone, optionally from a zone file          |
-| `update_zone`                | Replace the labels of a zone                                             |
-| `delete_zone`                | Permanently delete a zone — needs a `confirm_token`                      |
-| `export_zonefile`            | Export the zone as a BIND zone file                                      |
-| `import_zonefile`            | Import a BIND zone file (replaces all records) — needs a `confirm_token` |
-| `change_zone_ttl`            | Change the default TTL of a zone                                         |
-| `change_zone_protection`     | Enable/disable delete protection — disabling needs a `confirm_token`     |
-| `change_primary_nameservers` | Replace the primaries of a secondary zone — needs a `confirm_token`      |
+| Tool                            | Description                                                     |
+| ------------------------------- | --------------------------------------------------------------- |
+| `list_zones`                    | List zones with status, mode, nameservers and record counts     |
+| `get_zone`                      | Get the full details of a single zone                           |
+| `create_zone`                   | Create a primary or secondary zone, optionally from a zone file |
+| `update_zone`                   | Replace the labels of a zone                                    |
+| `delete_zone` 👤                | Permanently delete a zone                                       |
+| `export_zonefile`               | Export the zone as a BIND zone file                             |
+| `import_zonefile` 👤            | Import a BIND zone file (replaces all records)                  |
+| `change_zone_ttl`               | Change the default TTL of a zone                                |
+| `change_zone_protection` 👤     | Enable/disable delete protection — asks when _disabling_        |
+| `change_primary_nameservers` 👤 | Replace the primaries of a secondary zone                       |
 
 ### RRSets (record sets)
 
-| Tool                      | Description                                                           |
-| ------------------------- | --------------------------------------------------------------------- |
-| `list_rrsets`             | List the RRSets of a zone, filterable by name/type/labels             |
-| `get_rrset`               | Get a single RRSet by name and type                                   |
-| `create_rrset`            | Create a new RRSet with records                                       |
-| `update_rrset`            | Replace the labels of an RRSet                                        |
-| `delete_rrset`            | Permanently delete an RRSet — needs a `confirm_token`                 |
-| `set_records`             | Replace **all** records of an RRSet — needs a `confirm_token`         |
-| `add_records`             | Add records to an RRSet (creates it if missing)                       |
-| `remove_records`          | Remove specific records from an RRSet — needs a `confirm_token`       |
-| `change_rrset_ttl`        | Change the TTL of an RRSet (or reset to the zone default with `null`) |
-| `change_rrset_protection` | Enable/disable change protection — disabling needs a `confirm_token`  |
+| Tool                         | Description                                                           |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `list_rrsets`                | List the RRSets of a zone, filterable by name/type/labels             |
+| `get_rrset`                  | Get a single RRSet by name and type                                   |
+| `create_rrset`               | Create a new RRSet with records                                       |
+| `update_rrset`               | Replace the labels of an RRSet                                        |
+| `delete_rrset` 👤            | Permanently delete an RRSet                                           |
+| `set_records` 👤             | Replace **all** records of an RRSet                                   |
+| `add_records`                | Add records to an RRSet (creates it if missing)                       |
+| `remove_records` 👤          | Remove specific records from an RRSet                                 |
+| `change_rrset_ttl`           | Change the TTL of an RRSet (or reset to the zone default with `null`) |
+| `change_rrset_protection` 👤 | Enable/disable change protection — asks when _disabling_              |
+
+👤 asks a person through MCP elicitation · falls back to a two-call
+`confirm_token` where the client cannot show a dialog.
 
 ### Actions
 
@@ -206,11 +210,16 @@ exposed):
 
 ### Safety
 
-**Confirmation tokens.** Every irreversible tool — `delete_zone`, `delete_rrset`,
-`import_zonefile`, `set_records`, `remove_records`, `change_primary_nameservers`, and
+**A person is asked, not just told.** Every irreversible tool — `delete_zone`,
+`delete_rrset`, `import_zonefile`, `set_records`, `remove_records`,
+`change_primary_nameservers`, and
 `change_zone_protection`/`change_rrset_protection` when they _remove_ protection —
-refuses its first call and returns a random, single-use token that is valid for five
-minutes. The second call must repeat the identical arguments and pass that token:
+raises a real dialog through MCP elicitation where the client supports it. The model
+cannot answer it on its behalf, and nothing happens until an answer comes back.
+
+Where the client cannot show a dialog, the tool refuses its first call and returns a
+random, single-use token valid for five minutes; the second call must repeat the
+identical arguments and pass it:
 
 ```text
 1. set_records(zone: "example.com", name: "www", type: "A", records: [{value: "198.51.100.1"}])
@@ -219,13 +228,21 @@ minutes. The second call must repeat the identical arguments and pass that token
    → executed
 ```
 
-This is deliberately not a boolean the model can set on its own. The token exists only
-in a _previous_ tool result, so an instruction hidden in a TXT record or a zone-file
-comment cannot manufacture one. Tokens for `set_records`, `remove_records` and
-`import_zonefile` are bound to a hash of the exact payload: a confirmation for
-`["198.51.100.1"]` will not write `["198.51.100.66"]`.
+Deliberately not a boolean the model can set on its own: the token exists only in a
+_previous_ tool result, so an instruction hidden in a TXT record or a zone-file
+comment cannot manufacture one. But it proves the call was made twice with the same
+arguments and nothing more, and the fallback text says so rather than implying
+somebody approved.
 
-The token is a guard rail, not a security boundary — the boundary is the permission
+Either way the approval is bound to what it is about. For `set_records`,
+`remove_records` and `import_zonefile` that is a hash of the exact payload: an
+approval for `["198.51.100.1"]` will not write `["198.51.100.66"]`.
+
+`ELICITATION=false` takes the fallback path deliberately, for a scheduled job or a
+test harness. It never removes the guard. See
+[Asking a person](https://hetzner-dns-mcp.ni-c.de/guide/approval).
+
+The dialog is a guard rail, not a security boundary — the boundary is the permission
 prompt of your MCP host. Do not auto-approve these tools.
 
 **Untrusted upstream data.** Everything the API returns is wrapped in an
