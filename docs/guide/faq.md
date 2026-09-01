@@ -27,7 +27,7 @@ then retry.
 ## The server keeps refusing my deletion
 
 That is the [confirmation flow](/guide/security#confirmation-tokens) working.
-The first call is always refused and returns a `confirmToken`; the second call
+The first call is always refused and returns a `confirm_token`; the second call
 must repeat the **identical arguments** and include that token.
 
 If the second call is refused too, one of these is true:

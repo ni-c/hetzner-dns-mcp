@@ -87,7 +87,7 @@ export const perPage = z
   .optional()
   .describe('Entries per page (1-100, default 25)');
 
-export const confirmToken = z
+export const confirmTokenParam = z
   .string()
   .optional()
   .describe(

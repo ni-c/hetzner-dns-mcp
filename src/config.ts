@@ -1,4 +1,4 @@
-import { internalHostKind } from './hosts.js';
+import { internalHostKind } from 'mcp-internal-hosts';
 export interface Config {
   /**
    * Hetzner Cloud API token of the project that holds the DNS zones.

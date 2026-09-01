@@ -39,16 +39,43 @@ function stubFetch(
   return calls;
 }
 
-async function connectClient(serverConfig: Config = config): Promise<Client> {
+/** How a client that can show a dialog answers it. */
+type ElicitBehaviour = 'accept' | 'decline' | 'cancel';
+
+/**
+ * Connects a client to the real server.
+ *
+ * Without `elicit` the client declares no elicitation capability, which is the
+ * case the two-call token exists for and what every other test here drives.
+ * With it, the client answers the dialog and `prompts` records what the server
+ * put in front of the user.
+ */
+async function connectClient(
+  serverConfig: Config = config,
+  elicit?: ElicitBehaviour
+): Promise<Client & { prompts: string[] }> {
   const server = createServer(serverConfig);
-  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  const prompts: string[] = [];
+  const client = new Client(
+    { name: 'test-client', version: '0.0.0' },
+    elicit === undefined ? {} : { capabilities: { elicitation: {} } }
+  );
+  if (elicit !== undefined) {
+    client.setRequestHandler('elicitation/create', (request) => {
+      const params = request.params as { message?: string };
+      prompts.push(params.message ?? '');
+      if (elicit === 'cancel') return { action: 'cancel' };
+      if (elicit === 'decline') return { action: 'decline' };
+      return { action: 'accept', content: { confirm: true } };
+    });
+  }
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await Promise.all([
     server.connect(serverTransport),
     client.connect(clientTransport),
   ]);
-  return client;
+  return Object.assign(client, { prompts });
 }
 
 function resultText(result: CallToolResult): string {
@@ -71,7 +98,7 @@ function payload(result: CallToolResult): unknown {
 
 /** Reads the confirmation token out of a refusal message. */
 function tokenFrom(result: CallToolResult): string {
-  const match = /confirmToken: "([0-9a-f]{32})"/.exec(resultText(result));
+  const match = /confirm_token="([0-9a-f]{32})"/.exec(resultText(result));
   if (match === null) {
     throw new Error(`no confirmation token in:\n${resultText(result)}`);
   }
@@ -276,6 +303,125 @@ describe('create_rrset', () => {
   });
 });
 
+describe('asking the user', () => {
+  const zoneRoutes = (_url: string, init?: RequestInit) =>
+    init?.method === 'DELETE'
+      ? jsonResponse({ action: { id: 7, status: 'running' } }, 201)
+      : jsonResponse({ zone: { id: 1, record_count: 12 } });
+
+  it('asks, and deletes the zone once they accept', async () => {
+    // The point of the approval path: a client that can put a question in front
+    // of a person gets asked, instead of a token that only proves the same call
+    // was made twice.
+    const calls = stubFetch(zoneRoutes);
+    const client = await connectClient(config, 'accept');
+    const result = (await client.callTool({
+      name: 'delete_zone',
+      arguments: { zone: 'example.com' },
+    })) as CallToolResult;
+    expect(client.prompts).toHaveLength(1);
+    expect(client.prompts[0]).toContain('12 records');
+    expect(result.isError).toBeUndefined();
+    expect(calls.some((c) => c.init?.method === 'DELETE')).toBe(true);
+  });
+
+  it('deletes nothing when the user declines', async () => {
+    const calls = stubFetch(zoneRoutes);
+    const client = await connectClient(config, 'decline');
+    const result = (await client.callTool({
+      name: 'delete_zone',
+      arguments: { zone: 'example.com' },
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain('declined');
+    expect(calls.some((c) => c.init?.method === 'DELETE')).toBe(false);
+  });
+
+  it('deletes nothing when the user closes the dialog', async () => {
+    // Cancel is not a yes: for an irreversible delete the only safe reading of
+    // "no answer" is no.
+    const calls = stubFetch(zoneRoutes);
+    const client = await connectClient(config, 'cancel');
+    const result = (await client.callTool({
+      name: 'delete_zone',
+      arguments: { zone: 'example.com' },
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+    expect(calls.some((c) => c.init?.method === 'DELETE')).toBe(false);
+  });
+
+  it('offers no token to a client it can ask properly', async () => {
+    // The control that makes the three above mean something: the token path is
+    // unchanged, so a server that silently never asked would still pass every
+    // other confirmation test in this file.
+    stubFetch(zoneRoutes);
+    const client = await connectClient(config, 'decline');
+    const result = (await client.callTool({
+      name: 'delete_zone',
+      arguments: { zone: 'example.com' },
+    })) as CallToolResult;
+    expect(resultText(result)).not.toContain('confirm_token=');
+  });
+});
+
+describe('declining, on every guarded tool', () => {
+  // One accept case is enough to prove the path works; a decline case per tool
+  // is what proves each of them *acts on* the answer rather than falling
+  // through. They differ only in arguments, so they are written as a table.
+  const routes = () =>
+    jsonResponse({
+      zone: { id: 1, record_count: 3 },
+      rrset: {
+        name: 'www',
+        type: 'A',
+        ttl: 300,
+        records: [{ value: '1.2.3.4' }],
+      },
+      action: { id: 7, status: 'running' },
+    });
+
+  it.each([
+    ['import_zonefile', { zone: 'example.com', zonefile: '@ IN A 1.2.3.4' }],
+    [
+      'set_records',
+      {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '5.6.7.8' }],
+      },
+    ],
+    [
+      'remove_records',
+      {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '1.2.3.4' }],
+      },
+    ],
+    ['change_zone_protection', { zone: 'example.com', delete: false }],
+    [
+      'change_rrset_protection',
+      { zone: 'example.com', name: 'www', type: 'A', change: false },
+    ],
+  ])('%s does nothing when the user declines', async (name, args) => {
+    const calls = stubFetch(routes);
+    const client = await connectClient(config, 'decline');
+    const result = (await client.callTool({
+      name,
+      arguments: args as Record<string, unknown>,
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain('declined');
+    expect(
+      calls.some((c) =>
+        ['POST', 'PUT', 'DELETE'].includes(c.init?.method ?? '')
+      )
+    ).toBe(false);
+  });
+});
+
 describe('confirmation tokens', () => {
   it('refuses the first delete_zone call and executes the second one', async () => {
     const calls = stubFetch((_url, init) =>
@@ -290,13 +436,16 @@ describe('confirmation tokens', () => {
       arguments: { zone: 'example.com' },
     })) as CallToolResult;
 
-    expect(refused.isError).toBe(true);
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    expect(refused.isError).toBeUndefined();
     expect(resultText(refused)).toContain('12 records');
     expect(calls.some((c) => c.init?.method === 'DELETE')).toBe(false);
 
     const result = (await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'example.com', confirmToken: tokenFrom(refused) },
+      arguments: { zone: 'example.com', confirm_token: tokenFrom(refused) },
     })) as CallToolResult;
 
     expect(result.isError).toBeUndefined();
@@ -311,7 +460,7 @@ describe('confirmation tokens', () => {
 
     const result = (await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'example.com', confirmToken: 'f'.repeat(32) },
+      arguments: { zone: 'example.com', confirm_token: 'f'.repeat(32) },
     })) as CallToolResult;
 
     expect(result.isError).toBe(true);
@@ -329,7 +478,7 @@ describe('confirmation tokens', () => {
 
     const result = (await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'other.example', confirmToken: tokenFrom(refused) },
+      arguments: { zone: 'other.example', confirm_token: tokenFrom(refused) },
     })) as CallToolResult;
 
     expect(result.isError).toBe(true);
@@ -352,11 +501,11 @@ describe('confirmation tokens', () => {
 
     await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'example.com', confirmToken: token },
+      arguments: { zone: 'example.com', confirm_token: token },
     });
     const replay = (await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'example.com', confirmToken: token },
+      arguments: { zone: 'example.com', confirm_token: token },
     })) as CallToolResult;
 
     expect(replay.isError).toBe(true);
@@ -389,7 +538,7 @@ describe('confirmation tokens', () => {
         name: 'www',
         type: 'A',
         records: [{ value: '198.51.100.66' }],
-        confirmToken: tokenFrom(refused),
+        confirm_token: tokenFrom(refused),
       },
     })) as CallToolResult;
 
@@ -439,14 +588,17 @@ describe('confirmation tokens', () => {
     })) as CallToolResult;
 
     // A broken cosmetic lookup must not block the operation either.
-    expect(refused.isError).toBe(true);
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    expect(refused.isError).toBeUndefined();
     const result = (await client.callTool({
       name: 'delete_rrset',
       arguments: {
         zone: 'example.com',
         name: 'www',
         type: 'A',
-        confirmToken: tokenFrom(refused),
+        confirm_token: tokenFrom(refused),
       },
     })) as CallToolResult;
 
@@ -468,7 +620,10 @@ describe('confirmation tokens', () => {
       name: 'change_zone_protection',
       arguments: { zone: 'example.com', delete: false },
     })) as CallToolResult;
-    expect(refused.isError).toBe(true);
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    expect(refused.isError).toBeUndefined();
     expect(calls).toHaveLength(1);
 
     const result = (await client.callTool({
@@ -476,7 +631,7 @@ describe('confirmation tokens', () => {
       arguments: {
         zone: 'example.com',
         delete: false,
-        confirmToken: tokenFrom(refused),
+        confirm_token: tokenFrom(refused),
       },
     })) as CallToolResult;
     expect(result.isError).toBeUndefined();
@@ -507,7 +662,10 @@ describe('confirmation tokens', () => {
         change: false,
       },
     })) as CallToolResult;
-    expect(refused.isError).toBe(true);
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    expect(refused.isError).toBeUndefined();
     expect(calls).toHaveLength(1);
 
     const result = (await client.callTool({
@@ -517,7 +675,7 @@ describe('confirmation tokens', () => {
         name: 'www',
         type: 'A',
         change: false,
-        confirmToken: tokenFrom(refused),
+        confirm_token: tokenFrom(refused),
       },
     })) as CallToolResult;
     expect(result.isError).toBeUndefined();
@@ -546,7 +704,7 @@ describe('set_records', () => {
 
     await client.callTool({
       name: 'set_records',
-      arguments: { ...args, confirmToken: tokenFrom(refused) },
+      arguments: { ...args, confirm_token: tokenFrom(refused) },
     });
 
     const post = calls.find((c) => c.init?.method === 'POST');
@@ -619,7 +777,7 @@ describe('zone apex', () => {
       if (confirmed === true) {
         result = (await client.callTool({
           name: tool,
-          arguments: { ...callArgs, confirmToken: tokenFrom(result) },
+          arguments: { ...callArgs, confirm_token: tokenFrom(result) },
         })) as CallToolResult;
       }
 
@@ -653,7 +811,7 @@ describe('remove_records', () => {
 
     await client.callTool({
       name: 'remove_records',
-      arguments: { ...args, confirmToken: tokenFrom(refused) },
+      arguments: { ...args, confirm_token: tokenFrom(refused) },
     });
 
     expect(calls.find((c) => c.init?.method === 'POST')?.url).toBe(
@@ -676,12 +834,15 @@ describe('change_primary_nameservers', () => {
       arguments: args,
     })) as CallToolResult;
 
-    expect(refused.isError).toBe(true);
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    expect(refused.isError).toBeUndefined();
     expect(resultText(refused)).toContain('1 new primaries');
 
     await client.callTool({
       name: 'change_primary_nameservers',
-      arguments: { ...args, confirmToken: tokenFrom(refused) },
+      arguments: { ...args, confirm_token: tokenFrom(refused) },
     });
 
     expect(calls.find((c) => c.init?.method === 'POST')?.url).toBe(
@@ -703,7 +864,10 @@ describe('import_zonefile', () => {
       name: 'import_zonefile',
       arguments: { zone: 'example.com', zonefile: '@ IN A 198.51.100.1' },
     })) as CallToolResult;
-    expect(refused.isError).toBe(true);
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    expect(refused.isError).toBeUndefined();
     const token = tokenFrom(refused);
 
     const swapped = (await client.callTool({
@@ -711,7 +875,7 @@ describe('import_zonefile', () => {
       arguments: {
         zone: 'example.com',
         zonefile: '@ IN A 198.51.100.66',
-        confirmToken: token,
+        confirm_token: token,
       },
     })) as CallToolResult;
     expect(swapped.isError).toBe(true);
@@ -722,7 +886,7 @@ describe('import_zonefile', () => {
       arguments: {
         zone: 'example.com',
         zonefile: '@ IN A 198.51.100.1',
-        confirmToken: token,
+        confirm_token: token,
       },
     });
 
@@ -945,7 +1109,7 @@ describe('error handling', () => {
     })) as CallToolResult;
     const result = (await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'example.com', confirmToken: tokenFrom(refused) },
+      arguments: { zone: 'example.com', confirm_token: tokenFrom(refused) },
     })) as CallToolResult;
 
     expect(result.isError).toBe(true);

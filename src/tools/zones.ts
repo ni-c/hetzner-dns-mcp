@@ -2,9 +2,17 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 import type { HetznerApi } from '../api.js';
-import { fingerprint } from '../confirm.js';
+
+import { fingerprint } from '../resource-key.js';
 import { errorResult, jsonResult, run } from '../result.js';
-import { confirmToken, labels, page, perPage, ttl, zone } from '../schema.js';
+import {
+  confirmTokenParam,
+  labels,
+  page,
+  perPage,
+  ttl,
+  zone,
+} from '../schema.js';
 import type { ToolContext } from './context.js';
 
 const primaryNameservers = z
@@ -55,7 +63,7 @@ async function zoneRecordCount(
 }
 
 export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
-  const { api, confirmations, readOnly } = ctx;
+  const { api, approval, confirmations, readOnly } = ctx;
 
   server.registerTool(
     'list_zones',
@@ -194,21 +202,34 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Delete DNS zone',
       description:
-        'Permanently delete a DNS zone including all its records. This is irreversible. The first call returns a short-lived confirmation token; ask the user, then call again with confirmToken.',
-      inputSchema: z.object({ zone, confirmToken }),
+        'Permanently delete a DNS zone including all its records. This is irreversible. The first call returns a short-lived confirmation token; ask the user, then call again with confirm_token.',
+      inputSchema: z.object({ zone, confirm_token: confirmTokenParam }),
       annotations: { destructiveHint: true },
     },
-    ({ zone, confirmToken }) =>
+    ({ zone, confirm_token }, mcp) =>
       run(async () => {
         const resource = `delete_zone:${zone}`;
-        if (!confirmations.consume(resource, confirmToken)) {
-          const count = await zoneRecordCount(api, zone);
-          const token = confirmations.issue(resource);
-          return errorResult(
-            `Refusing to delete zone "${zone}" without confirmation. It currently holds ${count}, and deleting removes all of them irreversibly. ` +
-              `Confirm with the user, then call delete_zone again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}".`
-          );
+        const count = await zoneRecordCount(api, zone);
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: `delete zone "${zone}"`,
+            consequence: `It currently holds ${count}, and deleting removes all of them irreversibly.`,
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'delete_zone',
+            hint: 'Tick to go ahead, leave it to cancel.',
+          }
+        );
+        // A mismatched token is refused with the reason rather than answered with
+        // a fresh prompt; the sentence is the library's, so the fleet refuses alike.
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult(`The user declined. delete_zone did nothing.`);
         }
+        if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
           await api.delete(`/zones/${encodeURIComponent(zone)}`)
         );
@@ -220,27 +241,42 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Import zone file',
       description:
-        'Import a zone file (BIND format) into an existing primary zone. This REPLACES the current records of the zone. The first call returns a short-lived confirmation token bound to exactly this zone file; ask the user, then call again with confirmToken. Consider export_zonefile first as a backup.',
+        'Import a zone file (BIND format) into an existing primary zone. This REPLACES the current records of the zone. The first call returns a short-lived confirmation token bound to exactly this zone file; ask the user, then call again with confirm_token. Consider export_zonefile first as a backup.',
       inputSchema: z.object({
         zone,
         zonefile: z.string().min(1).describe('Zone file content to import'),
-        confirmToken,
+        confirm_token: confirmTokenParam,
       }),
       annotations: { destructiveHint: true },
     },
-    ({ zone, zonefile, confirmToken }) =>
+    ({ zone, zonefile, confirm_token }, mcp) =>
       run(async () => {
         // The token is bound to the zone file too: a confirmation for one
         // import must not execute a different one.
         const resource = `import_zonefile:${zone}:${fingerprint(zonefile)}`;
-        if (!confirmations.consume(resource, confirmToken)) {
-          const count = await zoneRecordCount(api, zone);
-          const token = confirmations.issue(resource);
-          return errorResult(
-            `Refusing to import a zone file into zone "${zone}" without confirmation. The zone currently holds ${count}, all of which are replaced by the import. ` +
-              `Confirm with the user, then call import_zonefile again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}" and the identical zonefile — the token only works for exactly this content.`
-          );
+        const count = await zoneRecordCount(api, zone);
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: `import a zone file into zone "${zone}"`,
+            consequence: `The zone currently holds ${count}, all of which are replaced by the import.`,
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'import_zonefile',
+            hint: 'Tick to go ahead, leave it to cancel.',
+            fallbackNote:
+              'The token only works for exactly this zonefile content.',
+          }
+        );
+        // A mismatched token is refused with the reason rather than answered with
+        // a fresh prompt; the sentence is the library's, so the fleet refuses alike.
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult(`The user declined. import_zonefile did nothing.`);
         }
+        if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
           await api.post(
             `/zones/${encodeURIComponent(zone)}/actions/import_zonefile`,
@@ -275,7 +311,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Change zone protection',
       description:
-        'Enable or disable the delete protection of a DNS zone. Enabling is immediate; DISABLING removes the last safeguard against delete_zone and therefore needs a confirmToken, exactly like a deletion.',
+        'Enable or disable the delete protection of a DNS zone. Enabling is immediate; DISABLING removes the last safeguard against delete_zone and therefore needs a confirm_token, exactly like a deletion.',
       inputSchema: z.object({
         zone,
         delete: z
@@ -283,23 +319,39 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
           .describe(
             'true to protect the zone from deletion, false to unprotect'
           ),
-        confirmToken,
+        confirm_token: confirmTokenParam,
       }),
       annotations: { idempotentHint: true },
     },
-    ({ zone, delete: deleteProtection, confirmToken }) =>
+    ({ zone, delete: deleteProtection, confirm_token }, mcp) =>
       run(async () => {
         // Enabling protection is safe; removing it is the first half of a
         // deletion and gets the same gate.
         if (!deleteProtection) {
           const resource = `change_zone_protection:${zone}`;
-          if (!confirmations.consume(resource, confirmToken)) {
-            const token = confirmations.issue(resource);
+          const outcome = await approval.requestApproval(
+            server,
+            mcp,
+            confirmations,
+            {
+              what: `remove the delete protection of zone "${zone}"`,
+              consequence: 'Doing so makes the zone deletable.',
+              resourceKey: resource,
+              token: confirm_token,
+              toolName: 'change_zone_protection',
+              hint: 'Tick to go ahead, leave it to cancel.',
+            }
+          );
+          // A mismatched token is refused with the reason rather than answered with
+          // a fresh prompt; the sentence is the library's, so the fleet refuses alike.
+          if (outcome.decision === 'rejected')
+            return errorResult(outcome.reason);
+          if (outcome.decision === 'declined') {
             return errorResult(
-              `Refusing to remove the delete protection of zone "${zone}" without confirmation. Doing so makes the zone deletable. ` +
-                `Confirm with the user, then call change_zone_protection again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}".`
+              `The user declined. change_zone_protection did nothing.`
             );
           }
+          if (outcome.decision === 'pending') return outcome.result;
         }
         return jsonResult(
           await api.post(
@@ -319,20 +371,37 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       inputSchema: z.object({
         zone,
         primary_nameservers: primaryNameservers,
-        confirmToken,
+        confirm_token: confirmTokenParam,
       }),
       annotations: { destructiveHint: true },
     },
-    ({ zone, primary_nameservers, confirmToken }) =>
+    ({ zone, primary_nameservers, confirm_token }, mcp) =>
       run(async () => {
         const resource = `change_primary_nameservers:${zone}:${fingerprint(primary_nameservers)}`;
-        if (!confirmations.consume(resource, confirmToken)) {
-          const token = confirmations.issue(resource);
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: `change the primary nameservers of zone "${zone}"`,
+            consequence: `The entire zone content will be transferred from the ${primary_nameservers.length} new primaries, replacing what is served today. Use get_zone to review the current primaries.`,
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'change_primary_nameservers',
+            hint: 'Tick to go ahead, leave it to cancel.',
+            fallbackNote:
+              'The token only works for exactly this nameserver list.',
+          }
+        );
+        // A mismatched token is refused with the reason rather than answered with
+        // a fresh prompt; the sentence is the library's, so the fleet refuses alike.
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
           return errorResult(
-            `Refusing to change the primary nameservers of zone "${zone}" without confirmation. The entire zone content will be transferred from the ${primary_nameservers.length} new primaries, replacing what is served today. Use get_zone to review the current primaries. ` +
-              `Confirm with the user, then call change_primary_nameservers again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}" and the identical nameserver list.`
+            `The user declined. change_primary_nameservers did nothing.`
           );
         }
+        if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
           await api.post(
             `/zones/${encodeURIComponent(zone)}/actions/change_primary_nameservers`,

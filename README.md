@@ -169,18 +169,18 @@ exposed):
 
 ### Zones
 
-| Tool                         | Description                                                             |
-| ---------------------------- | ----------------------------------------------------------------------- |
-| `list_zones`                 | List zones with status, mode, nameservers and record counts             |
-| `get_zone`                   | Get the full details of a single zone                                   |
-| `create_zone`                | Create a primary or secondary zone, optionally from a zone file         |
-| `update_zone`                | Replace the labels of a zone                                            |
-| `delete_zone`                | Permanently delete a zone — needs a `confirmToken`                      |
-| `export_zonefile`            | Export the zone as a BIND zone file                                     |
-| `import_zonefile`            | Import a BIND zone file (replaces all records) — needs a `confirmToken` |
-| `change_zone_ttl`            | Change the default TTL of a zone                                        |
-| `change_zone_protection`     | Enable/disable delete protection — disabling needs a `confirmToken`     |
-| `change_primary_nameservers` | Replace the primaries of a secondary zone — needs a `confirmToken`      |
+| Tool                         | Description                                                              |
+| ---------------------------- | ------------------------------------------------------------------------ |
+| `list_zones`                 | List zones with status, mode, nameservers and record counts              |
+| `get_zone`                   | Get the full details of a single zone                                    |
+| `create_zone`                | Create a primary or secondary zone, optionally from a zone file          |
+| `update_zone`                | Replace the labels of a zone                                             |
+| `delete_zone`                | Permanently delete a zone — needs a `confirm_token`                      |
+| `export_zonefile`            | Export the zone as a BIND zone file                                      |
+| `import_zonefile`            | Import a BIND zone file (replaces all records) — needs a `confirm_token` |
+| `change_zone_ttl`            | Change the default TTL of a zone                                         |
+| `change_zone_protection`     | Enable/disable delete protection — disabling needs a `confirm_token`     |
+| `change_primary_nameservers` | Replace the primaries of a secondary zone — needs a `confirm_token`      |
 
 ### RRSets (record sets)
 
@@ -190,12 +190,12 @@ exposed):
 | `get_rrset`               | Get a single RRSet by name and type                                   |
 | `create_rrset`            | Create a new RRSet with records                                       |
 | `update_rrset`            | Replace the labels of an RRSet                                        |
-| `delete_rrset`            | Permanently delete an RRSet — needs a `confirmToken`                  |
-| `set_records`             | Replace **all** records of an RRSet — needs a `confirmToken`          |
+| `delete_rrset`            | Permanently delete an RRSet — needs a `confirm_token`                 |
+| `set_records`             | Replace **all** records of an RRSet — needs a `confirm_token`         |
 | `add_records`             | Add records to an RRSet (creates it if missing)                       |
-| `remove_records`          | Remove specific records from an RRSet — needs a `confirmToken`        |
+| `remove_records`          | Remove specific records from an RRSet — needs a `confirm_token`       |
 | `change_rrset_ttl`        | Change the TTL of an RRSet (or reset to the zone default with `null`) |
-| `change_rrset_protection` | Enable/disable change protection — disabling needs a `confirmToken`   |
+| `change_rrset_protection` | Enable/disable change protection — disabling needs a `confirm_token`  |
 
 ### Actions
 
@@ -214,8 +214,8 @@ minutes. The second call must repeat the identical arguments and pass that token
 
 ```text
 1. set_records(zone: "example.com", name: "www", type: "A", records: [{value: "198.51.100.1"}])
-   → error: Refusing to replace the records … confirmToken: "3f9c…"
-2. set_records(…same arguments…, confirmToken: "3f9c…")
+   → error: Refusing to replace the records … confirm_token: "3f9c…"
+2. set_records(…same arguments…, confirm_token: "3f9c…")
    → executed
 ```
 

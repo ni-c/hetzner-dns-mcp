@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
   RRSET_TYPES,
-  confirmToken,
+  confirmTokenParam,
   labels,
   page,
   perPage,
@@ -15,7 +15,8 @@ import {
 } from '../schema.js';
 
 import type { HetznerApi } from '../api.js';
-import { fingerprint } from '../confirm.js';
+
+import { fingerprint } from '../resource-key.js';
 import { errorResult, jsonResult, run } from '../result.js';
 import type { ToolContext } from './context.js';
 
@@ -47,7 +48,7 @@ async function rrsetSummary(
 }
 
 export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
-  const { api, confirmations, readOnly } = ctx;
+  const { api, approval, confirmations, readOnly } = ctx;
 
   server.registerTool(
     'list_rrsets',
@@ -170,26 +171,39 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Delete RRSet',
       description:
-        'Permanently delete an RRSet (DNS record set) with all its records. This is irreversible. The first call returns a short-lived confirmation token; ask the user, then call again with confirmToken.',
+        'Permanently delete an RRSet (DNS record set) with all its records. This is irreversible. The first call returns a short-lived confirmation token; ask the user, then call again with confirm_token.',
       inputSchema: z.object({
         zone,
         name: rrsetName,
         type: rrsetType,
-        confirmToken,
+        confirm_token: confirmTokenParam,
       }),
       annotations: { destructiveHint: true },
     },
-    ({ zone, name, type, confirmToken }) =>
+    ({ zone, name, type, confirm_token }, mcp) =>
       run(async () => {
         const resource = `delete_rrset:${zone}${rrsetPath(name, type)}`;
-        if (!confirmations.consume(resource, confirmToken)) {
-          const summary = await rrsetSummary(api, zone, name, type);
-          const token = confirmations.issue(resource);
-          return errorResult(
-            `Refusing to delete RRSet "${name}/${type}" of zone "${zone}" without confirmation. It ${summary}, and deleting is irreversible. Use get_rrset to review the contents. ` +
-              `Confirm with the user, then call delete_rrset again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}".`
-          );
+        const summary = await rrsetSummary(api, zone, name, type);
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: `delete RRSet "${name}/${type}" of zone "${zone}"`,
+            consequence: `It ${summary}, and deleting is irreversible. Use get_rrset to review the contents.`,
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'delete_rrset',
+            hint: 'Tick to go ahead, leave it to cancel.',
+          }
+        );
+        // A mismatched token is refused with the reason rather than answered with
+        // a fresh prompt; the sentence is the library's, so the fleet refuses alike.
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult(`The user declined. delete_rrset did nothing.`);
         }
+        if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
           await api.delete(
             `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}`
@@ -209,23 +223,37 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         name: rrsetName,
         type: rrsetType,
         records,
-        confirmToken,
+        confirm_token: confirmTokenParam,
       }),
       annotations: { destructiveHint: true },
     },
-    ({ zone, name, type, records, confirmToken }) =>
+    ({ zone, name, type, records, confirm_token }, mcp) =>
       run(async () => {
         // Binding the token to the record list stops a confirmation obtained
         // for one set of values from writing a different one.
         const resource = `set_records:${zone}${rrsetPath(name, type)}:${fingerprint(records)}`;
-        if (!confirmations.consume(resource, confirmToken)) {
-          const summary = await rrsetSummary(api, zone, name, type);
-          const token = confirmations.issue(resource);
-          return errorResult(
-            `Refusing to replace the records of RRSet "${name}/${type}" of zone "${zone}" without confirmation. It ${summary}; all of them are replaced by the ${records.length} record(s) in this call. Use get_rrset to review the contents. ` +
-              `Confirm with the user, then call set_records again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}" and the identical records — the token only works for exactly this list.`
-          );
+        const summary = await rrsetSummary(api, zone, name, type);
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: `replace the records of RRSet "${name}/${type}" of zone "${zone}"`,
+            consequence: `It ${summary}; all of them are replaced by the ${records.length} record(s) in this call. Use get_rrset to review the contents.`,
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'set_records',
+            hint: 'Tick to go ahead, leave it to cancel.',
+            fallbackNote: 'The token only works for exactly this record list.',
+          }
+        );
+        // A mismatched token is refused with the reason rather than answered with
+        // a fresh prompt; the sentence is the library's, so the fleet refuses alike.
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult(`The user declined. set_records did nothing.`);
         }
+        if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
           await api.post(
             `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/set_records`,
@@ -276,21 +304,35 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         name: rrsetName,
         type: rrsetType,
         records,
-        confirmToken,
+        confirm_token: confirmTokenParam,
       }),
       annotations: { destructiveHint: true },
     },
-    ({ zone, name, type, records, confirmToken }) =>
+    ({ zone, name, type, records, confirm_token }, mcp) =>
       run(async () => {
         const resource = `remove_records:${zone}${rrsetPath(name, type)}:${fingerprint(records)}`;
-        if (!confirmations.consume(resource, confirmToken)) {
-          const summary = await rrsetSummary(api, zone, name, type);
-          const token = confirmations.issue(resource);
-          return errorResult(
-            `Refusing to remove records from RRSet "${name}/${type}" of zone "${zone}" without confirmation. It ${summary}; this call removes ${records.length} of them, and removing the last record deletes the RRSet. Use get_rrset to review the contents. ` +
-              `Confirm with the user, then call remove_records again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}" and the identical records — the token only works for exactly this list.`
-          );
+        const summary = await rrsetSummary(api, zone, name, type);
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: `remove records from RRSet "${name}/${type}" of zone "${zone}"`,
+            consequence: `It ${summary}; this call removes ${records.length} of them, and removing the last record deletes the RRSet. Use get_rrset to review the contents.`,
+            resourceKey: resource,
+            token: confirm_token,
+            toolName: 'remove_records',
+            hint: 'Tick to go ahead, leave it to cancel.',
+            fallbackNote: 'The token only works for exactly this record list.',
+          }
+        );
+        // A mismatched token is refused with the reason rather than answered with
+        // a fresh prompt; the sentence is the library's, so the fleet refuses alike.
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult(`The user declined. remove_records did nothing.`);
         }
+        if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
           await api.post(
             `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/remove_records`,
@@ -334,7 +376,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Change RRSet protection',
       description:
-        'Enable or disable the change protection of an RRSet. Enabling is immediate; DISABLING removes the last safeguard against delete_rrset and set_records and therefore needs a confirmToken.',
+        'Enable or disable the change protection of an RRSet. Enabling is immediate; DISABLING removes the last safeguard against delete_rrset and set_records and therefore needs a confirm_token.',
       inputSchema: z.object({
         zone,
         name: rrsetName,
@@ -344,21 +386,38 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
           .describe(
             'true to protect the RRSet from changes and deletion, false to unprotect'
           ),
-        confirmToken,
+        confirm_token: confirmTokenParam,
       }),
       annotations: { idempotentHint: true },
     },
-    ({ zone, name, type, change, confirmToken }) =>
+    ({ zone, name, type, change, confirm_token }, mcp) =>
       run(async () => {
         if (!change) {
           const resource = `change_rrset_protection:${zone}${rrsetPath(name, type)}`;
-          if (!confirmations.consume(resource, confirmToken)) {
-            const token = confirmations.issue(resource);
+          const outcome = await approval.requestApproval(
+            server,
+            mcp,
+            confirmations,
+            {
+              what: `remove the change protection of RRSet "${name}/${type}" of zone "${zone}"`,
+              consequence:
+                'Doing so makes the RRSet editable and deletable again.',
+              resourceKey: resource,
+              token: confirm_token,
+              toolName: 'change_rrset_protection',
+              hint: 'Tick to go ahead, leave it to cancel.',
+            }
+          );
+          // A mismatched token is refused with the reason rather than answered with
+          // a fresh prompt; the sentence is the library's, so the fleet refuses alike.
+          if (outcome.decision === 'rejected')
+            return errorResult(outcome.reason);
+          if (outcome.decision === 'declined') {
             return errorResult(
-              `Refusing to remove the change protection of RRSet "${name}/${type}" of zone "${zone}" without confirmation. Doing so makes the RRSet editable and deletable again. ` +
-                `Confirm with the user, then call change_rrset_protection again within ${confirmations.ttlMinutes} minutes with confirmToken: "${token}".`
+              `The user declined. change_rrset_protection did nothing.`
             );
           }
+          if (outcome.decision === 'pending') return outcome.result;
         }
         return jsonResult(
           await api.post(

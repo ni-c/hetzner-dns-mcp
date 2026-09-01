@@ -24,9 +24,9 @@ single-use token valid for five minutes:
 ```text
 delete_rrset(zone: "example.com", name: "www", type: "A")
   → Refusing to delete RRSet "www/A" of zone "example.com" without
-    confirmation. It currently holds 2 record(s), TTL 300 … confirmToken: "1b7e…"
+    confirmation. It currently holds 2 record(s), TTL 300 … confirm_token: "1b7e…"
 
-delete_rrset(zone: "example.com", name: "www", type: "A", confirmToken: "1b7e…")
+delete_rrset(zone: "example.com", name: "www", type: "A", confirm_token: "1b7e…")
   → executed
 ```
 

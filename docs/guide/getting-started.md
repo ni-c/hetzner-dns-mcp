@@ -62,7 +62,7 @@ comes back refused, with a token:
 Refusing to replace the records of RRSet "@/TXT" of zone "example.com" without
 confirmation. It currently holds 1 record(s), TTL 3600; all of them are replaced
 by the 2 record(s) in this call. Use get_rrset to review the contents. Confirm
-with the user, then call set_records again within 5 minutes with confirmToken:
+with the user, then call set_records again within 5 minutes with confirm_token:
 "9f3c1a…" and the identical records — the token only works for exactly this list.
 ```
 
