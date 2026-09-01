@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 import type { HetznerApi } from '../api.js';
+import { READ_ONLY } from './annotations.js';
 
 import { fingerprint } from '../resource-key.js';
 import { errorResult, jsonResult, run } from '../result.js';
@@ -87,7 +88,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         page,
         per_page: perPage,
       }),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     ({ name, mode, label_selector, page, per_page }) =>
       run(async () =>
@@ -109,7 +110,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       title: 'Get DNS zone',
       description: 'Get the full details of a single DNS zone.',
       inputSchema: z.object({ zone }),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     ({ zone }) =>
       run(async () =>
@@ -124,7 +125,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       description:
         'Export the full contents of a DNS zone as a zone file (BIND format).',
       inputSchema: z.object({ zone }),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     ({ zone }) =>
       run(async () => {
@@ -163,7 +164,14 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
             'Zone file (BIND format) to initialize a primary zone with. Ignored for secondary zones.'
           ),
       }),
-      annotations: {},
+      annotations: {
+        // Additive. Two calls do not make two zones; Hetzner refuses a
+        // duplicate name, but nothing is replaced either.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
     },
     ({ name, mode, ttl, labels, primary_nameservers, zonefile }) =>
       run(async () =>
@@ -187,7 +195,13 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       description:
         'Update the labels of a DNS zone. The given set replaces all existing labels. (Other zone properties are changed via the dedicated change_zone_* tools.)',
       inputSchema: z.object({ zone, labels }),
-      annotations: { idempotentHint: true },
+      annotations: {
+        // Replaces zone settings with the fields given.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, labels }) =>
       run(async () =>
@@ -204,7 +218,14 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       description:
         'Permanently delete a DNS zone including all its records. This is irreversible. The first call returns a short-lived confirmation token; ask the user, then call again with confirm_token.',
       inputSchema: z.object({ zone, confirm_token: confirmTokenParam }),
-      annotations: { destructiveHint: true },
+      annotations: {
+        // Idempotent by the specification's wording. It takes every record
+        // in the zone with it.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, confirm_token }, mcp) =>
       run(async () => {
@@ -247,7 +268,15 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         zonefile: z.string().min(1).describe('Zone file content to import'),
         confirm_token: confirmTokenParam,
       }),
-      annotations: { destructiveHint: true },
+      annotations: {
+        // Replaces the whole zone content with the file. Whatever was served
+        // before is gone, and the same file imported twice leaves the same
+        // zone.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, zonefile, confirm_token }, mcp) =>
       run(async () => {
@@ -293,7 +322,13 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       description:
         'Change the default Time To Live (TTL) of a DNS zone. Applies to RRSets without an explicit TTL.',
       inputSchema: z.object({ zone, ttl }),
-      annotations: { idempotentHint: true },
+      annotations: {
+        // A default for the zone, not its content.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, ttl }) =>
       run(async () =>
@@ -321,7 +356,14 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
           ),
         confirm_token: confirmTokenParam,
       }),
-      annotations: { idempotentHint: true },
+      annotations: {
+        // A state. Removing it is guarded because it is the rail in front of
+        // delete_zone.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, delete: deleteProtection, confirm_token }, mcp) =>
       run(async () => {
@@ -373,7 +415,14 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         primary_nameservers: primaryNameservers,
         confirm_token: confirmTokenParam,
       }),
-      annotations: { destructiveHint: true },
+      annotations: {
+        // Replaces the primaries the entire zone is transferred from, so what
+        // is served today is replaced by what they hold.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, primary_nameservers, confirm_token }, mcp) =>
       run(async () => {

@@ -142,6 +142,64 @@ describe('tool registration', () => {
     expect(byName.get('list_zones')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('export_zonefile')?.annotations?.readOnlyHint).toBe(true);
   });
+
+  it('declares all four annotation hints on every tool', async () => {
+    // Not a style rule. Two of the four default to a *stronger* claim than
+    // silence suggests: the specification gives destructiveHint and
+    // openWorldHint a default of true, so a tool that omits them announces
+    // itself as destructive and open-world. Three tools here shipped
+    // `annotations: {}`, which is that claim in its emptiest form.
+    stubFetch(() => jsonResponse({}));
+    const client = await connectClient();
+    const { tools } = await client.listTools();
+    const hints = [
+      'readOnlyHint',
+      'destructiveHint',
+      'idempotentHint',
+      'openWorldHint',
+    ] as const;
+    for (const tool of tools) {
+      for (const hint of hints) {
+        expect(typeof tool.annotations?.[hint], `${tool.name}.${hint}`).toBe(
+          'boolean'
+        );
+      }
+    }
+  });
+
+  it('answers the same for update_rrset as for set_records', async () => {
+    // They replace the records of an RRSet in the same way and only one of
+    // them said so. Both take a name off the internet if the new list is
+    // wrong, and neither can bring the old records back.
+    stubFetch(() => jsonResponse({}));
+    const client = await connectClient();
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((t) => [t.name, t.annotations]));
+    expect(byName.get('update_rrset')?.destructiveHint).toBe(true);
+    expect(byName.get('set_records')?.destructiveHint).toBe(true);
+  });
+
+  it('separates the records from the settings around them', async () => {
+    // The records are the content. A TTL and a protection flag are not, and
+    // all four of those tools used to inherit destructiveHint: true.
+    stubFetch(() => jsonResponse({}));
+    const client = await connectClient();
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((t) => [t.name, t.annotations]));
+    for (const setting of [
+      'change_rrset_ttl',
+      'change_zone_ttl',
+      'change_rrset_protection',
+      'change_zone_protection',
+    ]) {
+      expect(byName.get(setting)?.destructiveHint, setting).toBe(false);
+    }
+    // Adding is additive, and an RRSet is a set.
+    expect(byName.get('add_records')?.destructiveHint).toBe(false);
+    expect(byName.get('add_records')?.idempotentHint).toBe(true);
+    expect(byName.get('create_rrset')?.destructiveHint).toBe(false);
+    expect(byName.get('create_zone')?.destructiveHint).toBe(false);
+  });
 });
 
 describe('read-only mode', () => {

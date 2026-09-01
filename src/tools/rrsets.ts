@@ -15,6 +15,7 @@ import {
 } from '../schema.js';
 
 import type { HetznerApi } from '../api.js';
+import { READ_ONLY } from './annotations.js';
 
 import { fingerprint } from '../resource-key.js';
 import { errorResult, jsonResult, run } from '../result.js';
@@ -75,7 +76,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         page,
         per_page: perPage,
       }),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     ({ zone, name, type, label_selector, page, per_page }) =>
       run(async () =>
@@ -98,7 +99,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       description:
         'Get a single RRSet (DNS record set) of a zone by name and type.',
       inputSchema: z.object({ zone, name: rrsetName, type: rrsetType }),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     ({ zone, name, type }) =>
       run(async () =>
@@ -130,7 +131,14 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
           ),
         labels: labels.optional(),
       }),
-      annotations: {},
+      annotations: {
+        // Additive: it brings a name into existence. Hetzner refuses one that
+        // already exists, so this cannot overwrite what set_records guards.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
     },
     ({ zone, name, type, records, ttl, labels }) =>
       run(async () =>
@@ -153,7 +161,15 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       description:
         'Update the labels of an RRSet. The given set replaces all existing labels. (Records and TTL are changed via set_records/add_records/remove_records and change_rrset_ttl.)',
       inputSchema: z.object({ zone, name: rrsetName, type: rrsetType, labels }),
-      annotations: { idempotentHint: true },
+      annotations: {
+        // Replaces the records of an RRSet, exactly like set_records. Both
+        // take a name off the internet if the new list is wrong, and neither
+        // can bring the old records back.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, name, type, labels }) =>
       run(async () =>
@@ -178,7 +194,14 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         type: rrsetType,
         confirm_token: confirmTokenParam,
       }),
-      annotations: { destructiveHint: true },
+      annotations: {
+        // Idempotent by the specification's wording — the second call fails,
+        // but the world is the same either way.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, name, type, confirm_token }, mcp) =>
       run(async () => {
@@ -225,7 +248,13 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         records,
         confirm_token: confirmTokenParam,
       }),
-      annotations: { destructiveHint: true },
+      annotations: {
+        // Replaces every record of the RRSet with the ones given.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, name, type, records, confirm_token }, mcp) =>
       run(async () => {
@@ -280,7 +309,14 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
             "Time To Live in seconds. If omitted, the zone's default TTL applies."
           ),
       }),
-      annotations: {},
+      annotations: {
+        // Additive, and an RRSet is a set — adding a record it already holds
+        // changes nothing.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, name, type, records, ttl }) =>
       run(async () =>
@@ -306,7 +342,14 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         records,
         confirm_token: confirmTokenParam,
       }),
-      annotations: { destructiveHint: true },
+      annotations: {
+        // Idempotent: removing a record that is already gone leaves the same
+        // RRSet. Removing the last one deletes the RRSet.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, name, type, records, confirm_token }, mcp) =>
       run(async () => {
@@ -358,7 +401,13 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
             "Time To Live in seconds, or null to use the zone's default TTL"
           ),
       }),
-      annotations: { idempotentHint: true },
+      annotations: {
+        // A setting, not content. The records keep serving.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, name, type, ttl }) =>
       run(async () =>
@@ -388,7 +437,14 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
           ),
         confirm_token: confirmTokenParam,
       }),
-      annotations: { idempotentHint: true },
+      annotations: {
+        // A state. Removing it is guarded — it is the rail in front of
+        // delete_rrset and set_records — but it destroys nothing itself.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     ({ zone, name, type, change, confirm_token }, mcp) =>
       run(async () => {
