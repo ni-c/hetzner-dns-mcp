@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [Unreleased]
+
+### Added
+
+- Tools that need a confirmation now **ask the user**, on clients that can show
+  a prompt. The two-call `confirm_token` remains for clients that cannot, so
+  nothing that works today stops working — but where a person can be asked, one
+  is, instead of a token that only proves the same call was made twice.
+
+### Changed
+
+- **BREAKING: the confirmation parameter is now `confirm_token`, not
+  `confirmToken`.** This server was the only one of seventeen spelling it in
+  camelCase. A call passing `confirmToken` is rejected as an unknown argument;
+  pass `confirm_token` instead. Nothing else about the two-call flow changed.
+
+- Runs on **MCP SDK 2.0**. Existing clients see the same protocol revision they
+  always did; the change is the package layout behind it, and it is what lets
+  the dialog above work on both protocol eras from one code path — including
+  behind a stateless gateway, where the older mechanism silently fell back to
+  the weaker token for every client.
+
+- The linter is **oxlint** instead of eslint plus typescript-eslint, which
+  lifts the TypeScript ceiling: typescript-eslint pins `typescript` below 6.1,
+  so this repository was held on TypeScript 6 by its linter rather than by its
+  code.
+
+- The tool filter, the confirmation store, the host classifier and the
+  documentation-asset generator now come from **`mcp-tool-allowlist`**,
+  **`mcp-approval`**, **`mcp-internal-hosts`** and **`svg-asset-set`** rather
+  than from copies kept here — 863 fewer lines, and one place to fix each. None
+  of them has a runtime dependency of its own.
+
+- The first call of a guarded tool returns a plain result rather than an error
+  result. It is a question, not a failure, and every other server in the fleet
+  already answered it that way.
+
+### Fixed
+
+- Confirmation tokens are compared with a **constant-time** comparison. The
+  copy in this repository used `!==`, which leaks through timing how much of a
+  guess was right. Reaching a token still requires having received it in a
+  previous tool result, so this closes a margin rather than a hole.
+
+- A `confirm_token` that does not match is now refused with the reason —
+  invalid, expired, or issued for different arguments — instead of being
+  answered with a fresh prompt. The second is self-healing when a token merely
+  expired and silent when the token was issued for something else, which is the
+  case the binding exists to catch.
+
+- An entry in `HETZNER_ALLOW_TOOLS` that is not tool-name-shaped is now
+  **redacted** in the error rather than quoted back. `HETZNER_API_TOKEN` and
+  `HETZNER_ALLOW_TOOLS` are adjacent lines in every compose file, and a paste
+  into the wrong one used to print the credential into the client's log.
+
 ## [0.4.0] - 2026-08-27
 
 ### Added
