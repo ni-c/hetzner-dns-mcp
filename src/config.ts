@@ -127,7 +127,7 @@ export function parseElicitation(raw: string | undefined): boolean {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const token = env.HETZNER_API_TOKEN;
   const rawBaseUrl = env.HETZNER_API_BASE_URL;
-  const readOnly = /^(1|true|yes)$/i.test(env.HETZNER_READ_ONLY ?? '');
+  const readOnly = /^(1|true|yes)$/i.test(env.HETZNER_READ_ONLY?.trim() ?? '');
 
   delete env.HETZNER_API_TOKEN;
   delete env.HETZNER_API_BASE_URL;
