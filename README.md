@@ -168,6 +168,25 @@ exposed):
 
 ## Tools
 
+Every tool declares an `outputSchema` and answers with `structuredContent`
+alongside the text block, so a client can use the result without parsing prose.
+The `<untrusted-data>` fence stays in the text — it is the readable presentation
+of the same marker — and the structured half carries `untrusted: true` and
+`source: "hetzner-cloud-api"` as fields. **Every** tool carries them: record
+values, comments, labels and zone files are written by whoever controls the
+zone, and no tool here answers with anything else.
+
+The API documents are described as open objects with the top-level keys the
+[spec](https://docs.hetzner.cloud/cloud.spec.json) guarantees. The API is not
+this server's to promise, and the SDK validates each result against its schema
+before it goes out — a strict shape would turn a field Hetzner adds into a tool
+that fails outright.
+
+An over-budget result is now an **error**. It used to be cut off mid-document
+and say so, which is fine for a text block and impossible for
+`structuredContent`: the two channels have to carry the same value, and a
+document sliced mid-string does not parse.
+
 ### Zones
 
 | Tool                            | Description                                                     |

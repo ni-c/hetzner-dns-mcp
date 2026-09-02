@@ -33,22 +33,84 @@ function sanitize(key: string, value: unknown): unknown {
 }
 
 /**
- * Serializes an API response for the model: secrets redacted, oversized values
- * truncated, and the whole thing marked as untrusted data.
+ * Applies {@link sanitize} to a value rather than to its serialization.
+ *
+ * It used to run as a `JSON.stringify` replacer, which reached every string in
+ * the document for free. `structuredContent` is a value rather than text, so
+ * the same pass has to walk the tree — otherwise the two channels of one answer
+ * would differ in exactly the fields this server redacts, and the
+ * machine-readable one would be the unredacted half.
+ */
+function clean(value: unknown, key = ''): unknown {
+  const replaced = sanitize(key, value);
+  if (replaced !== value) return replaced;
+  if (Array.isArray(value)) return value.map((entry) => clean(entry));
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [name, entry] of Object.entries(value)) {
+      out[name] = clean(entry, name);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * An API response for the model: secrets redacted, oversized values truncated,
+ * and the whole thing marked as untrusted data — in both channels.
+ *
+ * `structuredContent` is the machine-readable half and the reason every tool
+ * here declares an `outputSchema`; the text block stays, fence and all, because
+ * the SDK does NOT synthesize one for an object-shaped value and the fence is
+ * the readable presentation of the same marker.
+ *
+ * The two marker names are stripped from the payload before they are set, so
+ * the guard cannot be switched off by the content it guards against — and a
+ * record value is written by whoever controls the zone.
  */
 export function jsonResult(data: unknown): CallToolResult {
-  let text = JSON.stringify(data, sanitize, 2);
-  let note = UNTRUSTED_NOTE;
+  const cleaned = clean(data);
+  const {
+    untrusted: _untrusted,
+    source: _source,
+    ...rest
+  } = (
+    cleaned !== null && typeof cleaned === 'object' && !Array.isArray(cleaned)
+      ? cleaned
+      : { result: cleaned }
+  ) as Record<string, unknown>;
+  const value = {
+    untrusted: true as const,
+    source: 'hetzner-cloud-api' as const,
+    ...rest,
+  };
 
+  const text = JSON.stringify(value, null, 2);
   if (text.length > MAX_RESULT_LENGTH) {
-    text = text.slice(0, MAX_RESULT_LENGTH);
-    note = `The result exceeded ${MAX_RESULT_LENGTH} characters and was cut off mid-document. Narrow it down with per_page/page on the list tools, or fetch a single record with get_rrset.\n${note}`;
+    // It used to cut the document here and say so. A document cut mid-string
+    // is not a smaller answer, it is an unparseable one — which a text block
+    // tolerates and `structuredContent` cannot, since the two channels have to
+    // carry the same value.
+    throw new ResultTooLargeError(
+      `The result exceeds ${MAX_RESULT_LENGTH} characters. Narrow it down ` +
+        'with per_page/page on the list tools, or fetch a single record with ' +
+        'get_rrset.'
+    );
   }
 
-  return textResult(
-    `<untrusted-data source="hetzner-cloud-api">\n${text}\n</untrusted-data>\n${note}`
-  );
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `<untrusted-data source="hetzner-cloud-api">\n${text}\n</untrusted-data>\n${UNTRUSTED_NOTE}`,
+      },
+    ],
+    structuredContent: value,
+  };
 }
+
+/** Raised by {@link jsonResult}; `run` turns it into an error result. */
+export class ResultTooLargeError extends Error {}
 
 export function errorResult(text: string): CallToolResult {
   return { content: [{ type: 'text', text }], isError: true };
@@ -77,6 +139,9 @@ export async function run(
   try {
     return await fn();
   } catch (error) {
+    if (error instanceof ResultTooLargeError) {
+      return errorResult(error.message);
+    }
     if (error instanceof HetznerApiError) {
       return errorResult(
         `${error.message}\n${error.body}${hintFor(error.status)}`

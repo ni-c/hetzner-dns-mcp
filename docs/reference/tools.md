@@ -7,6 +7,13 @@ the client cannot show one they fall back to a two-call `confirm_token`, and
 `ELICITATION=false` takes that fallback deliberately. See
 [Asking a person](/guide/approval).
 
+Every tool declares an `outputSchema` and answers with `structuredContent` beside
+the text block, so a client can use a result without parsing prose. All of them
+carry `untrusted: true` and `source: "hetzner-cloud-api"` as fields of that
+object — there is no exception list, because record values, comments, labels and
+zone files are written by whoever controls the zone. The `<untrusted-data>` fence
+stays in the text block, where it is the readable presentation of that marker.
+
 Every tool declares all four MCP annotations — `readOnlyHint`, `destructiveHint`,
 `idempotentHint`, `openWorldHint`. `openWorldHint` is `false` throughout: this
 server talks to the one Hetzner Cloud API it is configured for.

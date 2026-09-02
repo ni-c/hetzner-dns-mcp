@@ -1,6 +1,13 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
+  actionResult,
+  document,
+  listOf,
+  objectOf,
+  untrustedFields,
+} from '../output-schema.js';
+import {
   RRSET_TYPES,
   confirmTokenParam,
   labels,
@@ -148,6 +155,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         per_page: perPage,
       }),
       annotations: READ_ONLY,
+      outputSchema: listOf('rrsets'),
     },
     ({ zone, name, type, label_selector, page, per_page }) =>
       run(async () =>
@@ -171,6 +179,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         'Get a single RRSet (DNS record set) of a zone by name and type.',
       inputSchema: z.object({ zone, name: rrsetName, type: rrsetType }),
       annotations: READ_ONLY,
+      outputSchema: objectOf('rrset'),
     },
     ({ zone, name, type }) =>
       run(async () =>
@@ -213,6 +222,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: false,
         openWorldHint: false,
       },
+      outputSchema: objectOf('rrset'),
     },
     ({ zone, name, type, records, ttl, labels, confirm_token }, mcp) =>
       run(async () => {
@@ -276,6 +286,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: actionResult,
     },
     ({ zone, name, type, labels }) =>
       run(async () =>
@@ -308,6 +319,9 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: z
+        .object({ ...untrustedFields, action: document.optional() })
+        .catchall(z.unknown()),
     },
     ({ zone, name, type, confirm_token }, mcp) =>
       run(async () => {
@@ -361,6 +375,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: actionResult,
     },
     ({ zone, name, type, records, confirm_token }, mcp) =>
       run(async () => {
@@ -427,6 +442,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: actionResult,
     },
     ({ zone, name, type, records, ttl, confirm_token }, mcp) =>
       run(async () => {
@@ -489,6 +505,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: actionResult,
     },
     ({ zone, name, type, records, confirm_token }, mcp) =>
       run(async () => {
@@ -548,6 +565,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: actionResult,
     },
     ({ zone, name, type, ttl }) =>
       run(async () =>
@@ -585,6 +603,9 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: z
+        .object({ ...untrustedFields, action: document.optional() })
+        .catchall(z.unknown()),
     },
     ({ zone, name, type, change, confirm_token }, mcp) =>
       run(async () => {

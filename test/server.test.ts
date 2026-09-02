@@ -85,7 +85,15 @@ function resultText(result: CallToolResult): string {
     .join('\n');
 }
 
-/** Unwraps the untrusted-data envelope that every successful result carries. */
+/**
+ * The payload of a successful result, minus the two marker fields — and a check
+ * that the fenced text says the same thing.
+ *
+ * The specification's rule is that `content` and `structuredContent` are the
+ * same information in two presentations, and nothing enforces it. Every
+ * assertion in this suite goes through here, so every one of them also asserts
+ * the two agree.
+ */
 function payload(result: CallToolResult): unknown {
   const text = resultText(result);
   const match =
@@ -93,7 +101,14 @@ function payload(result: CallToolResult): unknown {
       text
     );
   if (match === null) throw new Error(`not a data result:\n${text}`);
-  return JSON.parse(match[1]);
+  const fromText = JSON.parse(match[1]) as Record<string, unknown>;
+  expect(result.structuredContent, 'structuredContent vs. text').toEqual(
+    fromText
+  );
+  const { untrusted, source, ...rest } = fromText;
+  expect(untrusted, 'the untrusted marker').toBe(true);
+  expect(source, 'the source marker').toBe('hetzner-cloud-api');
+  return rest;
 }
 
 /** Reads the confirmation token out of a refusal message. */
@@ -141,6 +156,41 @@ describe('tool registration', () => {
     ).toBe(true);
     expect(byName.get('list_zones')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('export_zonefile')?.annotations?.readOnlyHint).toBe(true);
+  });
+
+  it('declares an output schema on every tool', async () => {
+    // The same argument as the annotations below, one field along. A tool that
+    // says nothing about its result forces a client to parse prose to find out
+    // what it got, and the SDK sends no `structuredContent` at all for a tool
+    // that declared no schema.
+    const client = await connectClient();
+    const { tools } = await client.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      expect(tool.outputSchema, tool.name).toBeDefined();
+      // An object root, not merely a schema. SEP-2106 allows an array or a
+      // scalar, but a 2025-era client is served that same tool with the schema
+      // rewritten to `{result: …}` — so it would answer in two shapes
+      // depending on who asked.
+      expect(tool.outputSchema?.type, tool.name).toBe('object');
+    }
+  });
+
+  it('marks every result as untrusted, because all of it is', async () => {
+    // Record values, comments, labels and zone files are written by whoever
+    // controls the zone, and every tool here answers with an API document.
+    // There is no exception list, and saying so is what keeps the next tool
+    // from being the first one to forget.
+    const client = await connectClient();
+    const { tools } = await client.listTools();
+    const plain = tools
+      .filter((tool) => {
+        const properties = tool.outputSchema?.properties as
+          Record<string, unknown> | undefined;
+        return properties?.untrusted === undefined;
+      })
+      .map((tool) => tool.name);
+    expect(plain).toEqual([]);
   });
 
   it('declares all four annotation hints on every tool', async () => {
@@ -379,6 +429,7 @@ describe('asking the user', () => {
     })) as CallToolResult;
     expect(client.prompts).toHaveLength(1);
     expect(client.prompts[0]).toContain('12 records');
+
     expect(result.isError).toBeUndefined();
     expect(calls.some((c) => c.init?.method === 'DELETE')).toBe(true);
   });
@@ -497,7 +548,8 @@ describe('confirmation tokens', () => {
     // The first call is a question, not a failure. It used to come back as
     // an error result; every other server in the fleet returned a plain one,
     // and the shared approval path follows the majority.
-    expect(refused.isError).toBeUndefined();
+    // The prompt is an error result: what was asked for did not happen.
+    expect(refused.isError).toBe(true);
     expect(resultText(refused)).toContain('12 records');
     expect(calls.some((c) => c.init?.method === 'DELETE')).toBe(false);
 
@@ -649,7 +701,8 @@ describe('confirmation tokens', () => {
     // The first call is a question, not a failure. It used to come back as
     // an error result; every other server in the fleet returned a plain one,
     // and the shared approval path follows the majority.
-    expect(refused.isError).toBeUndefined();
+    // The prompt is an error result: what was asked for did not happen.
+    expect(refused.isError).toBe(true);
     const result = (await client.callTool({
       name: 'delete_rrset',
       arguments: {
@@ -681,7 +734,8 @@ describe('confirmation tokens', () => {
     // The first call is a question, not a failure. It used to come back as
     // an error result; every other server in the fleet returned a plain one,
     // and the shared approval path follows the majority.
-    expect(refused.isError).toBeUndefined();
+    // The prompt is an error result: what was asked for did not happen.
+    expect(refused.isError).toBe(true);
     expect(calls).toHaveLength(1);
 
     const result = (await client.callTool({
@@ -723,7 +777,8 @@ describe('confirmation tokens', () => {
     // The first call is a question, not a failure. It used to come back as
     // an error result; every other server in the fleet returned a plain one,
     // and the shared approval path follows the majority.
-    expect(refused.isError).toBeUndefined();
+    // The prompt is an error result: what was asked for did not happen.
+    expect(refused.isError).toBe(true);
     expect(calls).toHaveLength(1);
 
     const result = (await client.callTool({
@@ -899,7 +954,8 @@ describe('change_primary_nameservers', () => {
     // The first call is a question, not a failure. It used to come back as
     // an error result; every other server in the fleet returned a plain one,
     // and the shared approval path follows the majority.
-    expect(refused.isError).toBeUndefined();
+    // The prompt is an error result: what was asked for did not happen.
+    expect(refused.isError).toBe(true);
     expect(resultText(refused)).toContain('1 new primaries');
 
     await client.callTool({
@@ -929,7 +985,8 @@ describe('import_zonefile', () => {
     // The first call is a question, not a failure. It used to come back as
     // an error result; every other server in the fleet returned a plain one,
     // and the shared approval path follows the majority.
-    expect(refused.isError).toBeUndefined();
+    // The prompt is an error result: what was asked for did not happen.
+    expect(refused.isError).toBe(true);
     const token = tokenFrom(refused);
 
     const swapped = (await client.callTool({
@@ -1127,10 +1184,15 @@ describe('result shaping', () => {
       arguments: { zone: 'example.com' },
     })) as CallToolResult;
 
+    // It used to cut the document at the ceiling and say so. A document cut
+    // mid-string is not a smaller answer, it is an unparseable one — which a
+    // text block tolerates and `structuredContent` cannot, since the two
+    // channels have to carry the same value. So it refuses, and names the way
+    // to ask for less.
+    expect(result.isError).toBe(true);
     const text = resultText(result);
-    expect(text).toContain('was cut off mid-document');
     expect(text).toContain('per_page');
-    expect(text.length).toBeLessThan(210_000);
+    expect(text.length).toBeLessThan(1000);
   });
 });
 
@@ -1465,6 +1527,7 @@ describe('the ttl ceiling', () => {
         ttl: 604800,
       },
     })) as CallToolResult;
+
     expect(result.isError).toBeUndefined();
     expect(calls.at(-1)?.url).toContain('/actions/add_records');
   });

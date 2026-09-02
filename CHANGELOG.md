@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Every tool declares an `outputSchema` and answers with `structuredContent`
+  beside the text block. A client no longer has to parse prose to use a result.
+
+  All twenty-two carry `untrusted: true` and `source: "hetzner-cloud-api"` as
+  fields — there is no exception list, because record values, comments, labels
+  and zone files are written by whoever controls the zone and no tool here
+  answers with anything else. The `<untrusted-data>` fence stays in the text
+  block, where it is the readable presentation of the same marker.
+
+  The API documents are described as open objects with the top-level keys the
+  spec guarantees. A strict shape would turn a field Hetzner adds into a tool
+  that fails outright, since the SDK validates each result against its schema.
+
+### Fixed
+
+- Secret redaction and the per-value truncation now run over the structured
+  value as well. Both ran as a `JSON.stringify` replacer, which reached every
+  string in the document for free; a value handed over as `structuredContent`
+  is not text, so the same pass has to walk the tree. Without it the two
+  channels of one answer would have differed in exactly the fields this server
+  redacts — and the machine-readable one would have been the unredacted half.
+
+### Changed
+
+- An over-budget result is an error rather than a document cut off
+  mid-string. That was fine for a text block and is impossible for
+  `structuredContent`, which has to parse, and the two channels have to carry
+  the same value.
+
+- The two-call `confirm_token` prompt is an error result. What was asked for
+  did not happen, which is what `isError` says. The text is unchanged and still
+  carries the token.
+
 ### Changed
 
 - **The confirmation gate is drawn around authority, not around loss.** It used

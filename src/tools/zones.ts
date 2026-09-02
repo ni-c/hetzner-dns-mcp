@@ -1,5 +1,11 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import {
+  document,
+  listOf,
+  objectOf,
+  untrustedFields,
+} from '../output-schema.js';
 
 import type { HetznerApi } from '../api.js';
 import { READ_ONLY } from './annotations.js';
@@ -139,6 +145,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         per_page: perPage,
       }),
       annotations: READ_ONLY,
+      outputSchema: listOf('zones'),
     },
     ({ name, mode, label_selector, page, per_page }) =>
       run(async () =>
@@ -161,6 +168,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       description: 'Get the full details of a single DNS zone.',
       inputSchema: z.object({ zone }),
       annotations: READ_ONLY,
+      outputSchema: objectOf('zone'),
     },
     ({ zone }) =>
       run(async () =>
@@ -176,6 +184,12 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         'Export the full contents of a DNS zone as a zone file (BIND format).',
       inputSchema: z.object({ zone }),
       annotations: READ_ONLY,
+      outputSchema: z
+        .object({
+          ...untrustedFields,
+          zonefile: z.string().describe('BIND format, as the API rendered it.'),
+        })
+        .catchall(z.unknown()),
     },
     ({ zone }) =>
       run(async () => {
@@ -222,6 +236,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: false,
         openWorldHint: false,
       },
+      outputSchema: objectOf('zone'),
     },
     ({ name, mode, ttl, labels, primary_nameservers, zonefile }) =>
       run(async () =>
@@ -252,6 +267,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: objectOf('zone'),
     },
     ({ zone, labels }) =>
       run(async () =>
@@ -276,6 +292,9 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: z
+        .object({ ...untrustedFields, action: document.optional() })
+        .catchall(z.unknown()),
     },
     ({ zone, confirm_token }, mcp) =>
       run(async () => {
@@ -327,6 +346,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: objectOf('zone'),
     },
     ({ zone, zonefile, confirm_token }, mcp) =>
       run(async () => {
@@ -380,6 +400,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: objectOf('zone'),
     },
     ({ zone, ttl }) =>
       run(async () =>
@@ -415,6 +436,9 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: z
+        .object({ ...untrustedFields, action: document.optional() })
+        .catchall(z.unknown()),
     },
     ({ zone, delete: deleteProtection, confirm_token }, mcp) =>
       run(async () => {
@@ -474,6 +498,9 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         idempotentHint: true,
         openWorldHint: false,
       },
+      outputSchema: z
+        .object({ ...untrustedFields, action: document.optional() })
+        .catchall(z.unknown()),
     },
     ({ zone, primary_nameservers, confirm_token }, mcp) =>
       run(async () => {

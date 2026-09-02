@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { listOf, objectOf } from '../output-schema.js';
 
 import { jsonResult, run } from '../result.js';
 import { READ_ONLY } from './annotations.js';
@@ -27,6 +28,7 @@ export function registerActionTools(
         per_page: perPage,
       }),
       annotations: READ_ONLY,
+      outputSchema: listOf('actions'),
     },
     ({ zone, status, page, per_page }) =>
       run(async () => {
@@ -47,6 +49,7 @@ export function registerActionTools(
         action_id: z.number().int().positive().describe('ID of the action'),
       }),
       annotations: READ_ONLY,
+      outputSchema: objectOf('action'),
     },
     ({ action_id }) =>
       run(async () => jsonResult(await api.get(`/zones/actions/${action_id}`)))
