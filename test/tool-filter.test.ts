@@ -15,6 +15,7 @@ const base: Config = {
   token: 'test-token',
   baseUrl: 'https://api.hetzner.test/v1',
   readOnly: false,
+  elicitation: true,
   allowTools: undefined,
   denyTools: undefined,
 };

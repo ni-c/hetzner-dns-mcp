@@ -7,10 +7,16 @@ import { rrsetPath } from '../src/schema.js';
 import { createServer } from '../src/server.js';
 import { ALL_TOOLS, READ_TOOLS } from '../src/tools/catalogue.js';
 
+// Every field `Config` declares, written out rather than built from a partial.
+// That is what makes `npm run typecheck` fail when a field is added and this
+// literal is not — and it can only do that while the annotation really is
+// `Config`. Without it a missing field arrives as `undefined` at runtime, which
+// for `elicitation` reads as *off*.
 const config: Config = {
   token: 'test-token',
   baseUrl: 'https://api.hetzner.test/v1',
   readOnly: false,
+  elicitation: true,
   allowTools: undefined,
   denyTools: undefined,
 };
@@ -100,7 +106,10 @@ function payload(result: CallToolResult): unknown {
     /<untrusted-data source="hetzner-cloud-api">\n([\s\S]*)\n<\/untrusted-data>/.exec(
       text
     );
-  if (match === null) throw new Error(`not a data result:\n${text}`);
+  // `match?.[1]` rather than `match === null`: under noUncheckedIndexedAccess a
+  // capture group is `string | undefined` even after the null check, and the
+  // one thing this helper must not do is parse `undefined`.
+  if (!match?.[1]) throw new Error(`not a data result:\n${text}`);
   const fromText = JSON.parse(match[1]) as Record<string, unknown>;
   expect(result.structuredContent, 'structuredContent vs. text').toEqual(
     fromText
@@ -114,7 +123,7 @@ function payload(result: CallToolResult): unknown {
 /** Reads the confirmation token out of a refusal message. */
 function tokenFrom(result: CallToolResult): string {
   const match = /confirm_token="([0-9a-f]{32})"/.exec(resultText(result));
-  if (match === null) {
+  if (!match?.[1]) {
     throw new Error(`no confirmation token in:\n${resultText(result)}`);
   }
   return match[1];
