@@ -7,6 +7,7 @@
 [![license](https://img.shields.io/npm/l/hetzner-dns-mcp)](LICENSE)
 [![container](https://img.shields.io/badge/ghcr.io-ni--c%2Fhetzner--dns--mcp-blue)](https://github.com/ni-c/hetzner-dns-mcp/pkgs/container/hetzner-dns-mcp)
 [![docs](https://img.shields.io/badge/docs-hetzner--dns--mcp.ni--c.de-informational)](https://hetzner-dns-mcp.ni-c.de)
+[![HTTP • via mcp-hub](https://img.shields.io/badge/HTTP-via%20mcp--hub-6f42c1)](https://mcp-hub.ni-c.de)
 [![sponsor](https://img.shields.io/badge/sponsor-ni--c-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ni-c)
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for managing DNS zones and records via the [Hetzner Cloud API](https://docs.hetzner.cloud/reference/cloud#zones).
@@ -33,6 +34,32 @@ reliably from eight than from twenty-two — see
     <img src="https://hetzner-dns-mcp.ni-c.de/architecture.svg" alt="An MCP client speaks stdio to hetzner-dns-mcp, which validates arguments, puts destructive calls to a person first, and calls the Hetzner Cloud API over HTTPS" width="800">
   </picture>
 </p>
+
+<!-- <picture> is resolved against the colour scheme of the page showing it, so GitHub
+     picks the variant that matches its own theme toggle. npm strips <picture> and
+     <source> when it sanitises the README and keeps the <img>, which is why that
+     fallback brings its own dark card instead of relying on a media query. -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://hetzner-dns-mcp.ni-c.de/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://hetzner-dns-mcp.ni-c.de/architecture-light.svg">
+  <img src="https://hetzner-dns-mcp.ni-c.de/architecture.svg" alt="An MCP client talks to hetzner-dns-mcp over stdio; the server exposes read and write tools for zones and record sets, asks a person before a destructive call, and calls the Hetzner Cloud DNS API over HTTPS with an API token" width="800">
+</picture>
+
+## What makes it different
+
+**Zones, record sets and the actions behind them.** Listing, creating, updating
+and deleting zones and RRSets, importing and exporting BIND zone files, changing
+TTLs and protection — and following the asynchronous zone actions Hetzner queues
+behind a change, rather than reporting success and leaving you to guess.
+
+**Nothing upstream is trusted.** Record values, comments and zone files come back
+wrapped as untrusted data, secret-looking keys are redacted, oversized values are
+truncated and HTML error pages are dropped instead of pasted into the context.
+
+**Destructive calls ask a person.** Deleting a zone or replacing a record set
+raises a real dialog through MCP elicitation. Where the client cannot show one,
+the call is refused and carries a random single-use token that only ever appeared
+in a previous tool result — so nothing hidden inside a DNS record can mint it.
 
 ## Requirements
 
@@ -166,6 +193,39 @@ exposed):
 }
 ```
 
+### Through mcp-hub
+
+A client that cannot spawn a local process — ChatGPT connectors, Claude on the web,
+Cursor, LibreChat — reaches hetzner-dns-mcp through [mcp-hub](https://mcp-hub.ni-c.de): one
+container serves many stdio MCP servers over Streamable HTTP, with an OAuth 2.1 login
+behind a single password and long-lived tokens for the clients that cannot do OAuth. Its
+`/hub` endpoint puts every server behind six meta-tools, so one connector reaches all of
+them without N×tool schemas in the model's context, and it speaks both protocol revisions
+— a question this server asks travels through it to the person at the far end.
+
+Its `/config/mcp.json` uses Claude Code's format, so the entry is the one you already
+have:
+
+```json
+{
+  "mcpServers": {
+    "hetzner-dns": {
+      "command": "npx",
+      "args": ["-y", "hetzner-dns-mcp"],
+      "env": {
+        "HETZNER_API_TOKEN": "your-token",
+        "HETZNER_ALLOW_TOOLS": "essential"
+      },
+      "denyTools": ["delete_*"]
+    }
+  }
+}
+```
+
+`allowTools` and `denyTools` there are the hub's **own** per-server filter, which is not
+the same thing as `*_ALLOW_TOOLS` in `env` — the difference, and the mistake it invites,
+are in the [client guide](https://hetzner-dns-mcp.ni-c.de/guide/clients#through-mcp-hub).
+
 ## Tools
 
 Every tool declares an `outputSchema` and answers with `structuredContent`
@@ -285,6 +345,41 @@ setup.
 - TSIG keys passed to `create_zone`/`change_primary_nameservers` become part of the conversation context and client transcripts — treat them as secrets and rotate them if in doubt.
 - Hetzner-side resource protection is honored: protected zones/RRSets return an error with a hint to the corresponding `change_*_protection` tool.
 
+## Not exposed, on purpose
+
+**Only the Hetzner Cloud DNS API.** The standalone `dns.hetzner.com` API was shut
+down in May 2026 and is not implemented — scripts still using it are broken for
+reasons that have nothing to do with this server.
+
+**`HETZNER_API_BASE_URL` is not a provider switch.** It exists to point at a local
+mock during development, and is validated (HTTPS only, no credentials in the URL,
+a warning on a non-default host) precisely because your token is sent there. The
+request shapes are Hetzner's.
+
+## Safety
+
+- DNS records are edited by whoever holds the token, so upstream values,
+  comments and zone files are marked as untrusted data — to be reported, never
+  followed. Keys matching `tsig_key`, `token` or `secret` are redacted, values
+  over 4 000 characters are truncated, and an HTML error page is dropped rather
+  than pasted into the context.
+- Deleting a zone or replacing a record set asks a person: a real dialog through
+  MCP elicitation, bound to the exact target. Where the client cannot show one,
+  the call is refused and carries a random single-use token that only ever
+  appeared in a previous tool result.
+- `HETZNER_READ_ONLY=true` registers the seven read tools and nothing else — a
+  write tool is then absent from `tools/list`, not refused when called.
+- Requests are hardened rather than trusted: zone identifiers are pattern-matched
+  so a path cannot escape, redirects are refused so the `Authorization` header
+  never follows one, every request times out after 30 seconds, request bodies are
+  assembled from named fields only, and the base URL is validated (HTTPS, no
+  credentials) before the token is ever sent to it.
+
+## Documentation
+
+The full guide, tool reference and security notes live at
+**[hetzner-dns-mcp.ni-c.de](https://hetzner-dns-mcp.ni-c.de)** (source in [`docs/`](docs/)).
+
 ## Development
 
 ```bash
@@ -307,6 +402,28 @@ updates the entry in the official
 [MCP Registry](https://registry.modelcontextprotocol.io)
 (`io.github.ni-c/hetzner-dns-mcp`, via GitHub OIDC).
 
+## Releasing
+
+Releases are tag-driven. Bump `package.json`, move the `[Unreleased]` notes in
+`CHANGELOG.md` under the new version, commit, then:
+
+```sh
+git tag -s vX.Y.Z -m "vX.Y.Z"
+git push origin main vX.Y.Z
+```
+
+The release workflow publishes to npm via Trusted Publishing (OIDC, with
+provenance), pushes the multi-arch container image to GHCR, creates the GitHub
+release from the CHANGELOG section, and updates the entry in the official MCP
+registry.
+
+## Contributing
+
+Issues, discussions and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). For vulnerabilities please use
+[private reporting](https://github.com/ni-c/hetzner-dns-mcp/security/advisories/new)
+rather than a public issue; the policy is in [SECURITY.md](SECURITY.md).
+
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) © Willi Thiel
