@@ -22,6 +22,77 @@ import { errorResult, jsonResult, run } from '../result.js';
 import type { ToolContext } from './context.js';
 
 /**
+ * Record types that move authority rather than add an answer.
+ *
+ * The gate on this server was drawn around loss — "eight of the 22 tools can
+ * take a name off the internet, and DNS has no undo". That is the right
+ * question for a file and the wrong one for a zone. The dangerous act in DNS is
+ * not withdrawing a claim, it is *making* one, and every case below leaves
+ * every existing record exactly where it was:
+ *
+ * - an MX at preference 0 next to the real one wins all mail, because senders
+ *   try ascending preference (RFC 5321 §5.1)
+ * - an NS on a subname creates a zone cut, and the parent starts issuing
+ *   referrals for everything beneath it
+ * - a CAA changes which authority may issue certificates at all
+ * - CNAME, DS, TLSA, SVCB, HTTPS and SRV each redirect or re-key a name
+ *
+ * `@` is here because the apex is where SPF, DMARC and the zone's own NS set
+ * live, and `*` because a wildcard answers every name that does not exist yet.
+ *
+ * Deliberately **not** here: `_acme-challenge` TXT. Adding one is how DNS-01
+ * renewal works, its whole purpose is to run unattended, and a dialog on every
+ * certificate renewal is a cost with no matching benefit — the confirmation
+ * cannot tell a real ACME client from a forged token, and both look identical.
+ * What does defend that name is CAA (now gated) plus Certificate Transparency
+ * monitoring, and SECURITY.md says so.
+ */
+const AUTHORITY_TYPES = new Set([
+  'NS',
+  'DS',
+  'MX',
+  'CNAME',
+  'CAA',
+  'TLSA',
+  'SVCB',
+  'HTTPS',
+  'SRV',
+]);
+
+/** Whether adding this name/type decides who answers for something. */
+export function shiftsAuthority(name: string, type: string): boolean {
+  return AUTHORITY_TYPES.has(type) || name === '@' || name.includes('*');
+}
+
+/**
+ * The values a call is about to write, for the confirmation dialog.
+ *
+ * These are the caller's own arguments, not anything read back from the API —
+ * the distinction the rest of this file is careful about. Without them the
+ * dialog is byte-identical whether the record points at the right address or
+ * the attacker's, which makes the question unanswerable: "replace the records
+ * of www/A" is true either way. `renderDetails` collapses whitespace and caps
+ * each value, and prints them under "supplied by the caller, not by this
+ * server".
+ */
+function recordDetails(
+  values: readonly { value: string }[]
+): { label: string; value: string }[] {
+  const shown = values.slice(0, 5);
+  const details = shown.map((record, index) => ({
+    label: `record ${index + 1}`,
+    value: record.value,
+  }));
+  if (values.length > shown.length) {
+    details.push({
+      label: 'and',
+      value: `${values.length - shown.length} more not shown`,
+    });
+  }
+  return details;
+}
+
+/**
  * Describes the RRSet a destructive call is about to change, in numbers only.
  *
  * Record values and comments are written by whoever controls the zone, so they
@@ -130,28 +201,59 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
             "Time To Live in seconds. If omitted, the zone's default TTL applies."
           ),
         labels: labels.optional(),
+        confirm_token: confirmTokenParam,
       }),
       annotations: {
-        // Additive: it brings a name into existence. Hetzner refuses one that
-        // already exists, so this cannot overwrite what set_records guards.
+        // Additive in storage: Hetzner refuses a name that already exists, so
+        // this cannot overwrite what set_records guards. Not additive in
+        // effect — see shiftsAuthority — which is why the types that decide
+        // who answers for a name are confirmed.
         readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: false,
         openWorldHint: false,
       },
     },
-    ({ zone, name, type, records, ttl, labels }) =>
-      run(async () =>
-        jsonResult(
-          await api.post(`/zones/${encodeURIComponent(zone)}/rrsets`, {
-            name,
-            type,
-            records,
-            ...(ttl !== undefined && { ttl }),
-            ...(labels !== undefined && { labels }),
-          })
-        )
-      )
+    ({ zone, name, type, records, ttl, labels, confirm_token }, mcp) =>
+      run(async () => {
+        const write = async (): Promise<ReturnType<typeof jsonResult>> =>
+          jsonResult(
+            await api.post(`/zones/${encodeURIComponent(zone)}/rrsets`, {
+              name,
+              type,
+              records,
+              ...(ttl !== undefined && { ttl }),
+              ...(labels !== undefined && { labels }),
+            })
+          );
+        if (!shiftsAuthority(name, type)) return write();
+
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: `create the RRSet "${name}/${type}" in zone "${zone}"`,
+            consequence:
+              `A ${type} record decides who answers for a name rather than ` +
+              'adding an answer to it, and nothing existing has to be removed ' +
+              'for it to take effect. Check the values below against what you ' +
+              'meant.',
+            details: recordDetails(records),
+            resourceKey: `create_rrset:${zone}${rrsetPath(name, type)}:${fingerprint(records)}`,
+            token: confirm_token,
+            toolName: 'create_rrset',
+            hint: 'Tick to go ahead, leave it to cancel.',
+            fallbackNote: 'The token only works for exactly this record list.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult('The user declined. create_rrset did nothing.');
+        }
+        if (outcome.decision === 'pending') return outcome.result;
+        return write();
+      })
   );
 
   server.registerTool(
@@ -273,6 +375,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
           {
             what: `replace the records of RRSet "${name}/${type}" of zone "${zone}"`,
             consequence: `It ${summary}; all of them are replaced by the ${records.length} record(s) in this call. Use get_rrset to review the contents.`,
+            details: recordDetails(records),
             resourceKey: resource,
             token: confirm_token,
             toolName: 'set_records',
@@ -312,25 +415,57 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
           .describe(
             "Time To Live in seconds. If omitted, the zone's default TTL applies."
           ),
+        confirm_token: confirmTokenParam,
       }),
       annotations: {
         // Additive, and an RRSet is a set — adding a record it already holds
-        // changes nothing.
+        // changes nothing. That says nothing about the effect: an MX at
+        // preference 0 added beside the real one wins all mail without
+        // touching it. See shiftsAuthority.
         readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
       },
     },
-    ({ zone, name, type, records, ttl }) =>
-      run(async () =>
-        jsonResult(
-          await api.post(
-            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/add_records`,
-            { records, ...(ttl !== undefined && { ttl }) }
-          )
-        )
-      )
+    ({ zone, name, type, records, ttl, confirm_token }, mcp) =>
+      run(async () => {
+        const write = async (): Promise<ReturnType<typeof jsonResult>> =>
+          jsonResult(
+            await api.post(
+              `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/add_records`,
+              { records, ...(ttl !== undefined && { ttl }) }
+            )
+          );
+        if (!shiftsAuthority(name, type)) return write();
+
+        const summary = await rrsetSummary(api, zone, name, type);
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: `add ${records.length} record(s) to "${name}/${type}" of zone "${zone}"`,
+            consequence:
+              `It ${summary}, and those stay. A ${type} record decides who ` +
+              'answers for a name, so an added one can take effect without ' +
+              'anything being removed — at preference or priority order, the ' +
+              'new value can simply win. Check the values below.',
+            details: recordDetails(records),
+            resourceKey: `add_records:${zone}${rrsetPath(name, type)}:${fingerprint(records)}`,
+            token: confirm_token,
+            toolName: 'add_records',
+            hint: 'Tick to go ahead, leave it to cancel.',
+            fallbackNote: 'The token only works for exactly this record list.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult('The user declined. add_records did nothing.');
+        }
+        if (outcome.decision === 'pending') return outcome.result;
+        return write();
+      })
   );
 
   server.registerTool(
@@ -366,6 +501,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
           {
             what: `remove records from RRSet "${name}/${type}" of zone "${zone}"`,
             consequence: `It ${summary}; this call removes ${records.length} of them, and removing the last record deletes the RRSet. Use get_rrset to review the contents.`,
+            details: recordDetails(records),
             resourceKey: resource,
             token: confirm_token,
             toolName: 'remove_records',

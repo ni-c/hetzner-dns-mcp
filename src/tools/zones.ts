@@ -16,6 +16,56 @@ import {
 } from '../schema.js';
 import type { ToolContext } from './context.js';
 
+/**
+ * The values a call is about to write, for the confirmation dialog.
+ *
+ * The caller's own arguments — not read back from the API, which is the
+ * distinction this file is otherwise careful about. Without them the dialog is
+ * byte-identical whether the zone is about to be transferred from the right
+ * primaries or from somebody else's: "change the primary nameservers of zone X"
+ * is true either way, and it is the only sentence the person sees.
+ *
+ * `tsig_key` is deliberately absent. It is a secret, the schema says so, and a
+ * dialog is not the place to print one.
+ */
+function nameserverDetails(
+  servers: readonly { address: string; port?: number | undefined }[]
+): { label: string; value: string }[] {
+  return servers.slice(0, 5).map((server, index) => ({
+    label: `primary ${index + 1}`,
+    value:
+      server.port === undefined
+        ? server.address
+        : `${server.address} port ${server.port}`,
+  }));
+}
+
+/**
+ * A zone file is too big to show and too consequential to hide entirely.
+ *
+ * The lines that decide who answers — NS, MX, CNAME, CAA and the SOA — are the
+ * ones worth reading before replacing a zone with them. Everything else is
+ * summarised as a count.
+ */
+function zonefileDetails(zonefile: string): { label: string; value: string }[] {
+  const lines = zonefile
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith(';'));
+  const authority = lines.filter((line) =>
+    /\b(SOA|NS|MX|CNAME|CAA)\b/i.test(line)
+  );
+  const details = authority.slice(0, 5).map((line, index) => ({
+    label: `authority record ${index + 1}`,
+    value: line,
+  }));
+  details.push({
+    label: 'in total',
+    value: `${lines.length} record line(s), ${authority.length} of them deciding who answers`,
+  });
+  return details;
+}
+
 const primaryNameservers = z
   .array(
     z.object({
@@ -291,6 +341,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
           {
             what: `import a zone file into zone "${zone}"`,
             consequence: `The zone currently holds ${count}, all of which are replaced by the import.`,
+            details: zonefileDetails(zonefile),
             resourceKey: resource,
             token: confirm_token,
             toolName: 'import_zonefile',
@@ -434,6 +485,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
           {
             what: `change the primary nameservers of zone "${zone}"`,
             consequence: `The entire zone content will be transferred from the ${primary_nameservers.length} new primaries, replacing what is served today. Use get_zone to review the current primaries.`,
+            details: nameserverDetails(primary_nameservers),
             resourceKey: resource,
             token: confirm_token,
             toolName: 'change_primary_nameservers',

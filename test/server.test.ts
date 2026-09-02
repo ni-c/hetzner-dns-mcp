@@ -797,6 +797,10 @@ describe('zone apex', () => {
       tool: 'add_records',
       args: { records },
       url: `${base}/actions/add_records`,
+      // The apex is confirmed now: it is where SPF, DMARC and the zone's own NS
+      // set live, so adding there decides who answers rather than adding an
+      // answer. See shiftsAuthority.
+      confirmed: true,
     },
     {
       tool: 'remove_records',
@@ -1248,5 +1252,220 @@ describe('error handling', () => {
     const text = resultText(result);
     expect(text).toContain('(truncated)');
     expect(text.length).toBeLessThan(4000);
+  });
+});
+
+describe('what the gate is drawn around', () => {
+  // The gate used to be drawn around loss — "eight of the 22 tools can take a
+  // name off the internet, and DNS has no undo". That is the right question for
+  // a file and the wrong one for a zone: the dangerous act in DNS is making a
+  // claim, not withdrawing one, and none of the cases below removes anything.
+  const zone = 'example.com';
+  const write = (): FetchCall[] =>
+    stubFetch((_url, init) =>
+      init?.method === 'GET'
+        ? jsonResponse({ rrset: { records: [], ttl: 300 } })
+        : jsonResponse({ action: {} }, 201)
+    );
+
+  const authorityCases = [
+    // Senders try MX in ascending preference, so a 0 beside the real 10 wins
+    // all mail while leaving it in place.
+    { name: 'mail', type: 'MX', value: '0 mail.attacker.example.' },
+    // A zone cut: the parent starts issuing referrals for everything below.
+    { name: 'internal', type: 'NS', value: 'ns1.attacker.example.' },
+    // Decides which authority may issue certificates at all.
+    { name: '@', type: 'CAA', value: '0 issue "attacker-ca.example"' },
+    { name: 'www', type: 'CNAME', value: 'attacker.example.' },
+    // The apex carries SPF, DMARC and the zone's own NS set.
+    { name: '@', type: 'TXT', value: '"v=spf1 +all"' },
+    // Answers every name that does not exist yet.
+    { name: '*', type: 'A', value: '203.0.113.66' },
+  ] as const;
+
+  it.each(authorityCases)(
+    'confirms create_rrset for $name/$type',
+    async ({ name, type, value }) => {
+      const calls = write();
+      const client = await connectClient();
+      const result = (await client.callTool({
+        name: 'create_rrset',
+        arguments: { zone, name, type, records: [{ value }] },
+      })) as CallToolResult;
+
+      expect(resultText(result)).toContain('confirm_token=');
+      expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
+    }
+  );
+
+  it.each(authorityCases)(
+    'confirms add_records for $name/$type',
+    async ({ name, type, value }) => {
+      const calls = write();
+      const client = await connectClient();
+      const result = (await client.callTool({
+        name: 'add_records',
+        arguments: { zone, name, type, records: [{ value }] },
+      })) as CallToolResult;
+
+      expect(resultText(result)).toContain('confirm_token=');
+      expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
+    }
+  );
+
+  it.each([
+    { name: 'www', type: 'A', value: '198.51.100.1' },
+    { name: 'api', type: 'AAAA', value: '2001:db8::1' },
+    // The one name whose purpose is to run unattended. A dialog on every
+    // certificate renewal buys nothing: the confirmation cannot tell a real
+    // ACME client from a forged token. CAA and CT monitoring defend this one.
+    { name: '_acme-challenge', type: 'TXT', value: '"token-goes-here"' },
+  ])(
+    'lets $name/$type through without asking',
+    async ({ name, type, value }) => {
+      const calls = write();
+      const client = await connectClient();
+      const result = (await client.callTool({
+        name: 'add_records',
+        arguments: { zone, name, type, records: [{ value }] },
+      })) as CallToolResult;
+
+      expect(result.isError).toBeUndefined();
+      expect(resultText(result)).not.toContain('confirm_token=');
+      expect(calls.at(-1)?.url).toContain('/actions/add_records');
+    }
+  );
+
+  it('acts once the confirmation comes back', async () => {
+    const calls = write();
+    const client = await connectClient();
+    const args = {
+      zone,
+      name: 'mail',
+      type: 'MX',
+      records: [{ value: '0 mail.attacker.example.' }],
+    };
+    const asked = (await client.callTool({
+      name: 'add_records',
+      arguments: args,
+    })) as CallToolResult;
+    const done = (await client.callTool({
+      name: 'add_records',
+      arguments: { ...args, confirm_token: tokenFrom(asked) },
+    })) as CallToolResult;
+
+    expect(done.isError).toBeUndefined();
+    expect(calls.at(-1)?.url).toContain('/actions/add_records');
+  });
+
+  it('binds the confirmation to the record values, not just the name', async () => {
+    write();
+    const client = await connectClient();
+    const base = { zone, name: 'mail', type: 'MX' };
+    const asked = (await client.callTool({
+      name: 'add_records',
+      arguments: { ...base, records: [{ value: '10 mx1.example.com.' }] },
+    })) as CallToolResult;
+
+    const swapped = (await client.callTool({
+      name: 'add_records',
+      arguments: {
+        ...base,
+        records: [{ value: '0 mail.attacker.example.' }],
+        confirm_token: tokenFrom(asked),
+      },
+    })) as CallToolResult;
+    expect(swapped.isError).toBe(true);
+  });
+});
+
+describe('the confirmation dialog', () => {
+  // Every requestApproval call in this repo used to pass numbers only, so the
+  // prompt was byte-identical whether the record pointed at the right address
+  // or the attacker's. "replace the records of www/A — it currently holds 1
+  // record" is true either way, and it is the only sentence the person sees.
+  it('shows the values the call is about to write', async () => {
+    stubFetch((_url, init) =>
+      init?.method === 'GET'
+        ? jsonResponse({
+            rrset: { records: [{ value: '198.51.100.1' }], ttl: 300 },
+          })
+        : jsonResponse({ action: {} }, 201)
+    );
+    const client = await connectClient();
+    const result = (await client.callTool({
+      name: 'set_records',
+      arguments: {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '203.0.113.66' }],
+      },
+    })) as CallToolResult;
+
+    const text = resultText(result);
+    expect(text).toContain('203.0.113.66');
+    expect(text).toContain('supplied by the caller, not by this server');
+  });
+
+  it('does not print a TSIG key into the dialog', async () => {
+    // The schema calls it a secret. A dialog is not the place for one.
+    stubFetch((_url, init) =>
+      init?.method === 'GET'
+        ? jsonResponse({ zone: { record_count: 12 } })
+        : jsonResponse({ action: {} }, 201)
+    );
+    const client = await connectClient();
+    const result = (await client.callTool({
+      name: 'change_primary_nameservers',
+      arguments: {
+        zone: 'example.com',
+        primary_nameservers: [
+          { address: '203.0.113.9', port: 53, tsig_key: 'super-secret-key' },
+        ],
+      },
+    })) as CallToolResult;
+
+    const text = resultText(result);
+    expect(text).toContain('203.0.113.9');
+    expect(text).not.toContain('super-secret-key');
+  });
+});
+
+describe('the ttl ceiling', () => {
+  it('refuses a ttl no resolver would honour', async () => {
+    // 2147483647 is 68 years and nothing caches it: BIND caps at a week,
+    // Unbound at a day. What it does buy is recovery time — a record served
+    // from caches long after it was removed at the authority.
+    stubFetch(() => jsonResponse({ action: {} }, 201));
+    const client = await connectClient();
+    const result = (await client.callTool({
+      name: 'add_records',
+      arguments: {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '198.51.100.1' }],
+        ttl: 2147483647,
+      },
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+  });
+
+  it('still accepts a week', async () => {
+    const calls = stubFetch(() => jsonResponse({ action: {} }, 201));
+    const client = await connectClient();
+    const result = (await client.callTool({
+      name: 'add_records',
+      arguments: {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '198.51.100.1' }],
+        ttl: 604800,
+      },
+    })) as CallToolResult;
+    expect(result.isError).toBeUndefined();
+    expect(calls.at(-1)?.url).toContain('/actions/add_records');
   });
 });

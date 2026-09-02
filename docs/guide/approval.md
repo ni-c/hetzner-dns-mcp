@@ -1,7 +1,7 @@
 # Asking a person
 
-Eight of the 22 tools can take a name off the internet, and DNS has no undo.
-All eight **ask a person first**.
+Ten of the 22 tools can decide who answers for a name, and DNS has no undo.
+Those ten **ask a person first**.
 
 Not a `confirm: true` argument the model can set. Not a token the model reads out
 of its own previous result. A dialog, raised through [MCP
@@ -28,6 +28,8 @@ answer comes back, nothing happens.
 | `change_primary_nameservers` | always, bound to the exact server list |
 | `change_zone_protection`     | only when it **removes** protection    |
 | `change_rrset_protection`    | only when it **removes** protection    |
+| `create_rrset`               | when the record decides who answers    |
+| `add_records`                | when the record decides who answers    |
 | everything else              | never                                  |
 
 Protection is the asymmetric case. Switching it _on_ costs nothing and is asked
@@ -40,12 +42,53 @@ it should be — the comment claimed it replaced records “exactly like
 organisational metadata. Nothing goes off the internet, so nothing is asked. It
 stays marked destructive, because Hetzner keeps no history of labels either.
 
+## Why adding is not automatically safe
+
+The first eight entries are about loss. That is the right question for a file and
+only half of it for a zone: the dangerous act in DNS is **making** a claim, not
+withdrawing one, and none of the following removes anything.
+
+- an `MX` at preference `0` beside the real one wins all mail — senders try
+  ascending preference (RFC 5321 §5.1), and the existing record stays exactly
+  where it was
+- an `NS` on a subname creates a zone cut, and the parent starts issuing
+  referrals for everything beneath it
+- a `CAA` changes which certificate authority may issue at all
+- `CNAME`, `DS`, `TLSA`, `SVCB` and `SRV` each redirect or re-key a name
+
+So `create_rrset` and `add_records` ask when the type is one of those, when the
+name is the apex `@` — where SPF, DMARC and the zone's own `NS` set live — or
+when it contains `*`, which answers every name that does not exist yet.
+Everything else, `www/A` included, goes through without a dialog.
+
+### The deliberate exception
+
+`_acme-challenge` `TXT` records are **not** gated, and that is a decision rather
+than an oversight. Adding one is how DNS-01 renewal works, its entire purpose is
+to run unattended, and a dialog on every certificate renewal is a cost with no
+matching benefit — the confirmation cannot tell a real ACME client from a forged
+token, because from here the two look identical.
+
+What defends that name is `CAA`, which is gated now, plus Certificate
+Transparency monitoring: a certificate issued behind your back shows up in the
+CT logs within minutes. If you rely on this server for DNS-01, watch them.
+
 ## What the dialog contains
 
-Zone names, record-set names and counts. Never record values, comments or the
-contents of a zone file — those are written by whoever controls the zone, which
-for a zone you have just taken over is not necessarily you, and the prompt is read
-by a model at the exact moment it is deciding.
+Zone names, record-set names, counts — and **the values this call is about to
+write**, on their own lines under "supplied by the caller, not by this server".
+
+That distinction is the point, and it used to be drawn one step too broadly.
+Values that come _back from the API_ stay out: they are written by whoever
+controls the zone, which for a zone you have just taken over is not necessarily
+you, and the prompt is read by a model at the exact moment it is deciding.
+Values that go _into_ the call are the opposite — they are the thing being
+decided about, and without them the dialog is byte-identical whether the record
+points where you meant or somewhere else. "Replace the records of `www/A` — it
+currently holds 1 record" is true either way.
+
+A `tsig_key` is never printed. The schema calls it a secret, and a dialog is not
+the place for one.
 
 ```
 This will delete RRSet "www/A" of zone "example.com".

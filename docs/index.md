@@ -4,7 +4,7 @@ layout: home
 hero:
   name: hetzner-dns-mcp
   text: Your DNS, through the assistant
-  tagline: An MCP server for the Hetzner Cloud DNS API — 22 tools for zones, record sets, zone files, TTLs and protection, and a person asked before anything irreversible.
+  tagline: An MCP server for the Hetzner Cloud DNS API — 22 tools for zones, record sets, zone files, TTLs and protection, and a person asked before anything that decides who answers for a name.
   actions:
     - theme: brand
       text: Get started

@@ -133,9 +133,12 @@ A single RRSet by name and type.
 ### `create_rrset`
 
 Create a new RRSet. Fails if one with the same name and type exists — use
-`set_records` or `add_records` then.
+`set_records` or `add_records` then. Gated only when the record decides who
+answers for a name — see
+[Asking a person](/guide/approval#why-adding-is-not-automatically-safe).
 
-**Arguments:** `zone`, `name`, `type`, `records`, `ttl?`, `labels?`
+**Arguments:** `zone`, `name`, `type`, `records`, `ttl?`, `labels?`,
+`confirm_token?`
 
 ### `update_rrset`
 
@@ -159,7 +162,8 @@ is bound to a hash of the record list.
 ### `add_records`
 
 Append records to an RRSet, keeping the existing ones. Creates the RRSet if it
-does not exist. Not gated — it adds rather than replaces.
+does not exist. Gated only when the record decides who answers for a name — see
+[Asking a person](/guide/approval#why-adding-is-not-automatically-safe).
 
 **Arguments:** `zone`, `name`, `type`, `records`, `ttl?`
 

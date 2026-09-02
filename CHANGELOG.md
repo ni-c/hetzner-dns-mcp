@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The confirmation gate is drawn around authority, not around loss.** It used
+  to be "eight of the 22 tools can take a name off the internet"; that is the
+  right question for a file and half of it for a zone. The dangerous act in DNS
+  is making a claim, not withdrawing one, and none of these removes anything:
+
+  - an `MX` at preference `0` beside the real one wins all mail, because senders
+    try ascending preference (RFC 5321 §5.1) and the existing record stays
+  - an `NS` on a subname creates a zone cut, and the parent starts issuing
+    referrals for everything beneath it
+  - a `TXT` at `_acme-challenge` is a valid DNS-01 response — RFC 8555 §8.4 says
+    the CA verifies "one of" the records, so an _added_ one is enough for a
+    publicly trusted certificate
+  - a `CAA` decides which authority may issue at all
+
+  `create_rrset` and `add_records` therefore ask when the type is `NS`, `DS`,
+  `MX`, `CNAME`, `CAA`, `TLSA`, `SVCB`, `HTTPS` or `SRV`, when the name is the
+  apex `@`, or when it contains `*`. `www/A` still goes through untouched.
+
+  **`_acme-challenge` `TXT` is deliberately exempt.** Its whole purpose is to run
+  unattended, and a dialog on every certificate renewal buys nothing — the
+  confirmation cannot tell a real ACME client from a forged token. `CAA` (now
+  gated) and Certificate Transparency monitoring are what defend that name, and
+  the guide says so.
+
+- **The dialog shows the values the call is about to write.** No
+  `requestApproval` in this repo passed `details`, so the prompt was
+  byte-identical whether the record pointed where you meant or somewhere else:
+  "replace the records of `www/A` — it currently holds 1 record" is true either
+  way, and it was the only sentence a person saw. `change_primary_nameservers`
+  named no address at all.
+
+  The rule that kept them out was applied one step too broadly. Values that come
+  _back from the API_ are written by whoever controls the zone and stay out.
+  Values that go _into_ the call come from the model and are the thing being
+  decided about. `renderDetails` prints them under "supplied by the caller, not
+  by this server", collapsed and capped. A `tsig_key` is never printed.
+
+- `ttl` is capped at 604800 (one week) instead of the protocol maximum of 2147483647. No resolver honours more — BIND caps at a week, Unbound at a day —
+  so the larger values buy nothing except recovery time for whoever set them: a
+  record served from caches long after it was removed at the authority.
+
 ### Added
 
 - Tools that need a confirmation now **ask the user**, on clients that can show

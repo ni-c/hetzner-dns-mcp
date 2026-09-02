@@ -61,12 +61,26 @@ export const records = z
   )
   .min(1);
 
+/**
+ * One week, which is BIND's `max-cache-ttl` and the longest any resolver will
+ * actually hold an answer — Unbound caps at a day.
+ *
+ * The protocol maximum of 2147483647 is 68 years and buys nothing: no resolver
+ * honours it. What it does buy an attacker is recovery time. A record added
+ * with a TTL of years is served from caches long after it has been removed at
+ * the authority, so the operator's fix does not take effect on the schedule the
+ * operator chose. Capping here costs nothing real and takes that away.
+ */
+const MAX_TTL_SECONDS = 604800;
+
 export const ttl = z
   .number()
   .int()
   .min(60)
-  .max(2147483647)
-  .describe('Time To Live in seconds (60 to 2147483647)');
+  .max(MAX_TTL_SECONDS)
+  .describe(
+    `Time To Live in seconds (60 to ${MAX_TTL_SECONDS}, one week — longer values are not honoured by resolvers)`
+  );
 
 export const labels = z
   .record(z.string(), z.string())
