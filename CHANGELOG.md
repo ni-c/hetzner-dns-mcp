@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The advertised schemas avoid a spelling that is legal JSON Schema and still
+  gets a tool refused, or its constraint silently dropped, by some MCP clients:
+  an open object now writes `"additionalProperties": true` rather than the
+  empty schema `{}` zod emits for it. What the tools accept and return is
+  unchanged; only the way the schema says so is.
+
 - An over-budget result is an error rather than a document cut off
   mid-string. That was fine for a text block and is impossible for
   `structuredContent`, which has to parse, and the two channels have to carry

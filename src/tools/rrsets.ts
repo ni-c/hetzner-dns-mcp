@@ -321,7 +321,8 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: z
         .object({ ...untrustedFields, action: document.optional() })
-        .catchall(z.unknown()),
+        .catchall(z.unknown())
+        .meta({ additionalProperties: true }),
     },
     ({ zone, name, type, confirm_token }, mcp) =>
       run(async () => {
@@ -605,7 +606,8 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: z
         .object({ ...untrustedFields, action: document.optional() })
-        .catchall(z.unknown()),
+        .catchall(z.unknown())
+        .meta({ additionalProperties: true }),
     },
     ({ zone, name, type, change, confirm_token }, mcp) =>
       run(async () => {

@@ -11,6 +11,13 @@ import { z } from 'zod';
  *
  * The spec at https://docs.hetzner.cloud/cloud.spec.json is the source these
  * key names come from.
+ *
+ * Every open object here carries `.meta({ additionalProperties: true })`. Left
+ * to itself zod writes "accepts anything" as `"additionalProperties": {}` — an
+ * empty schema, legal and meaning exactly the same as `true`, but the spelling
+ * some MCP clients refuse or mishandle. `meta` is merged into the emitted JSON
+ * Schema and nothing else, so the wire says `true` while the runtime stays as
+ * permissive as it has to be.
  */
 
 /** The marker every result carries. All of it comes from the API. */
@@ -41,14 +48,16 @@ export function listOf(key: string) {
       [key]: z.array(document),
       meta,
     })
-    .catchall(z.unknown());
+    .catchall(z.unknown())
+    .meta({ additionalProperties: true });
 }
 
 /** A single-object answer: the named record. */
 export function objectOf(key: string) {
   return z
     .object({ ...untrustedFields, [key]: document })
-    .catchall(z.unknown());
+    .catchall(z.unknown())
+    .meta({ additionalProperties: true });
 }
 
 /**
@@ -67,4 +76,5 @@ export const actionResult = z
     rrset: document.optional(),
     zone: document.optional(),
   })
-  .catchall(z.unknown());
+  .catchall(z.unknown())
+  .meta({ additionalProperties: true });

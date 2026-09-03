@@ -189,7 +189,8 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
           ...untrustedFields,
           zonefile: z.string().describe('BIND format, as the API rendered it.'),
         })
-        .catchall(z.unknown()),
+        .catchall(z.unknown())
+        .meta({ additionalProperties: true }),
     },
     ({ zone }) =>
       run(async () => {
@@ -294,7 +295,8 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: z
         .object({ ...untrustedFields, action: document.optional() })
-        .catchall(z.unknown()),
+        .catchall(z.unknown())
+        .meta({ additionalProperties: true }),
     },
     ({ zone, confirm_token }, mcp) =>
       run(async () => {
@@ -438,7 +440,8 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: z
         .object({ ...untrustedFields, action: document.optional() })
-        .catchall(z.unknown()),
+        .catchall(z.unknown())
+        .meta({ additionalProperties: true }),
     },
     ({ zone, delete: deleteProtection, confirm_token }, mcp) =>
       run(async () => {
@@ -500,7 +503,8 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: z
         .object({ ...untrustedFields, action: document.optional() })
-        .catchall(z.unknown()),
+        .catchall(z.unknown())
+        .meta({ additionalProperties: true }),
     },
     ({ zone, primary_nameservers, confirm_token }, mcp) =>
       run(async () => {
