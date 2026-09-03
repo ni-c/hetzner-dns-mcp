@@ -1,6 +1,5 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { CallToolResult } from '@modelcontextprotocol/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Config } from '../src/config.js';
@@ -8,10 +7,16 @@ import { rrsetPath } from '../src/schema.js';
 import { createServer } from '../src/server.js';
 import { ALL_TOOLS, READ_TOOLS } from '../src/tools/catalogue.js';
 
+// Every field `Config` declares, written out rather than built from a partial.
+// That is what makes `npm run typecheck` fail when a field is added and this
+// literal is not — and it can only do that while the annotation really is
+// `Config`. Without it a missing field arrives as `undefined` at runtime, which
+// for `elicitation` reads as *off*.
 const config: Config = {
   token: 'test-token',
   baseUrl: 'https://api.hetzner.test/v1',
   readOnly: false,
+  elicitation: true,
   allowTools: undefined,
   denyTools: undefined,
 };
@@ -40,16 +45,43 @@ function stubFetch(
   return calls;
 }
 
-async function connectClient(serverConfig: Config = config): Promise<Client> {
+/** How a client that can show a dialog answers it. */
+type ElicitBehaviour = 'accept' | 'decline' | 'cancel';
+
+/**
+ * Connects a client to the real server.
+ *
+ * Without `elicit` the client declares no elicitation capability, which is the
+ * case the two-call token exists for and what every other test here drives.
+ * With it, the client answers the dialog and `prompts` records what the server
+ * put in front of the user.
+ */
+async function connectClient(
+  serverConfig: Config = config,
+  elicit?: ElicitBehaviour
+): Promise<Client & { prompts: string[] }> {
   const server = createServer(serverConfig);
-  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  const prompts: string[] = [];
+  const client = new Client(
+    { name: 'test-client', version: '0.0.0' },
+    elicit === undefined ? {} : { capabilities: { elicitation: {} } }
+  );
+  if (elicit !== undefined) {
+    client.setRequestHandler('elicitation/create', (request) => {
+      const params = request.params as { message?: string };
+      prompts.push(params.message ?? '');
+      if (elicit === 'cancel') return { action: 'cancel' };
+      if (elicit === 'decline') return { action: 'decline' };
+      return { action: 'accept', content: { confirm: true } };
+    });
+  }
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await Promise.all([
     server.connect(serverTransport),
     client.connect(clientTransport),
   ]);
-  return client;
+  return Object.assign(client, { prompts });
 }
 
 function resultText(result: CallToolResult): string {
@@ -59,21 +91,39 @@ function resultText(result: CallToolResult): string {
     .join('\n');
 }
 
-/** Unwraps the untrusted-data envelope that every successful result carries. */
+/**
+ * The payload of a successful result, minus the two marker fields — and a check
+ * that the fenced text says the same thing.
+ *
+ * The specification's rule is that `content` and `structuredContent` are the
+ * same information in two presentations, and nothing enforces it. Every
+ * assertion in this suite goes through here, so every one of them also asserts
+ * the two agree.
+ */
 function payload(result: CallToolResult): unknown {
   const text = resultText(result);
   const match =
     /<untrusted-data source="hetzner-cloud-api">\n([\s\S]*)\n<\/untrusted-data>/.exec(
       text
     );
-  if (match === null) throw new Error(`not a data result:\n${text}`);
-  return JSON.parse(match[1]);
+  // `match?.[1]` rather than `match === null`: under noUncheckedIndexedAccess a
+  // capture group is `string | undefined` even after the null check, and the
+  // one thing this helper must not do is parse `undefined`.
+  if (!match?.[1]) throw new Error(`not a data result:\n${text}`);
+  const fromText = JSON.parse(match[1]) as Record<string, unknown>;
+  expect(result.structuredContent, 'structuredContent vs. text').toEqual(
+    fromText
+  );
+  const { untrusted, source, ...rest } = fromText;
+  expect(untrusted, 'the untrusted marker').toBe(true);
+  expect(source, 'the source marker').toBe('hetzner-cloud-api');
+  return rest;
 }
 
 /** Reads the confirmation token out of a refusal message. */
 function tokenFrom(result: CallToolResult): string {
-  const match = /confirmToken: "([0-9a-f]{32})"/.exec(resultText(result));
-  if (match === null) {
+  const match = /confirm_token="([0-9a-f]{32})"/.exec(resultText(result));
+  if (!match?.[1]) {
     throw new Error(`no confirmation token in:\n${resultText(result)}`);
   }
   return match[1];
@@ -116,6 +166,99 @@ describe('tool registration', () => {
     expect(byName.get('list_zones')?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get('export_zonefile')?.annotations?.readOnlyHint).toBe(true);
   });
+
+  it('declares an output schema on every tool', async () => {
+    // The same argument as the annotations below, one field along. A tool that
+    // says nothing about its result forces a client to parse prose to find out
+    // what it got, and the SDK sends no `structuredContent` at all for a tool
+    // that declared no schema.
+    const client = await connectClient();
+    const { tools } = await client.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      expect(tool.outputSchema, tool.name).toBeDefined();
+      // An object root, not merely a schema. SEP-2106 allows an array or a
+      // scalar, but a 2025-era client is served that same tool with the schema
+      // rewritten to `{result: …}` — so it would answer in two shapes
+      // depending on who asked.
+      expect(tool.outputSchema?.type, tool.name).toBe('object');
+    }
+  });
+
+  it('marks every result as untrusted, because all of it is', async () => {
+    // Record values, comments, labels and zone files are written by whoever
+    // controls the zone, and every tool here answers with an API document.
+    // There is no exception list, and saying so is what keeps the next tool
+    // from being the first one to forget.
+    const client = await connectClient();
+    const { tools } = await client.listTools();
+    const plain = tools
+      .filter((tool) => {
+        const properties = tool.outputSchema?.properties as
+          Record<string, unknown> | undefined;
+        return properties?.untrusted === undefined;
+      })
+      .map((tool) => tool.name);
+    expect(plain).toEqual([]);
+  });
+
+  it('declares all four annotation hints on every tool', async () => {
+    // Not a style rule. Two of the four default to a *stronger* claim than
+    // silence suggests: the specification gives destructiveHint and
+    // openWorldHint a default of true, so a tool that omits them announces
+    // itself as destructive and open-world. Three tools here shipped
+    // `annotations: {}`, which is that claim in its emptiest form.
+    stubFetch(() => jsonResponse({}));
+    const client = await connectClient();
+    const { tools } = await client.listTools();
+    const hints = [
+      'readOnlyHint',
+      'destructiveHint',
+      'idempotentHint',
+      'openWorldHint',
+    ] as const;
+    for (const tool of tools) {
+      for (const hint of hints) {
+        expect(typeof tool.annotations?.[hint], `${tool.name}.${hint}`).toBe(
+          'boolean'
+        );
+      }
+    }
+  });
+
+  it('answers the same for update_rrset as for set_records', async () => {
+    // They replace the records of an RRSet in the same way and only one of
+    // them said so. Both take a name off the internet if the new list is
+    // wrong, and neither can bring the old records back.
+    stubFetch(() => jsonResponse({}));
+    const client = await connectClient();
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((t) => [t.name, t.annotations]));
+    expect(byName.get('update_rrset')?.destructiveHint).toBe(true);
+    expect(byName.get('set_records')?.destructiveHint).toBe(true);
+  });
+
+  it('separates the records from the settings around them', async () => {
+    // The records are the content. A TTL and a protection flag are not, and
+    // all four of those tools used to inherit destructiveHint: true.
+    stubFetch(() => jsonResponse({}));
+    const client = await connectClient();
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((t) => [t.name, t.annotations]));
+    for (const setting of [
+      'change_rrset_ttl',
+      'change_zone_ttl',
+      'change_rrset_protection',
+      'change_zone_protection',
+    ]) {
+      expect(byName.get(setting)?.destructiveHint, setting).toBe(false);
+    }
+    // Adding is additive, and an RRSet is a set.
+    expect(byName.get('add_records')?.destructiveHint).toBe(false);
+    expect(byName.get('add_records')?.idempotentHint).toBe(true);
+    expect(byName.get('create_rrset')?.destructiveHint).toBe(false);
+    expect(byName.get('create_zone')?.destructiveHint).toBe(false);
+  });
 });
 
 describe('read-only mode', () => {
@@ -134,13 +277,15 @@ describe('read-only mode', () => {
     const calls = stubFetch(() => jsonResponse({}));
     const client = await connectClient(readOnly);
 
-    const result = (await client.callTool({
-      name: 'delete_zone',
-      arguments: { zone: 'example.com' },
-    })) as CallToolResult;
-
-    expect(result.isError).toBe(true);
-    expect(resultText(result)).toContain('Tool delete_zone not found');
+    // SDK v2 reports an unknown tool as a JSON-RPC error rather than as a
+    // result carrying isError. Either way the call fails and nothing reaches
+    // the API, which is what this test is about.
+    await expect(
+      client.callTool({
+        name: 'delete_zone',
+        arguments: { zone: 'example.com' },
+      })
+    ).rejects.toThrow('Tool delete_zone not found');
     expect(calls).toHaveLength(0);
   });
 });
@@ -275,6 +420,126 @@ describe('create_rrset', () => {
   });
 });
 
+describe('asking the user', () => {
+  const zoneRoutes = (_url: string, init?: RequestInit) =>
+    init?.method === 'DELETE'
+      ? jsonResponse({ action: { id: 7, status: 'running' } }, 201)
+      : jsonResponse({ zone: { id: 1, record_count: 12 } });
+
+  it('asks, and deletes the zone once they accept', async () => {
+    // The point of the approval path: a client that can put a question in front
+    // of a person gets asked, instead of a token that only proves the same call
+    // was made twice.
+    const calls = stubFetch(zoneRoutes);
+    const client = await connectClient(config, 'accept');
+    const result = (await client.callTool({
+      name: 'delete_zone',
+      arguments: { zone: 'example.com' },
+    })) as CallToolResult;
+    expect(client.prompts).toHaveLength(1);
+    expect(client.prompts[0]).toContain('12 records');
+
+    expect(result.isError).toBeUndefined();
+    expect(calls.some((c) => c.init?.method === 'DELETE')).toBe(true);
+  });
+
+  it('deletes nothing when the user declines', async () => {
+    const calls = stubFetch(zoneRoutes);
+    const client = await connectClient(config, 'decline');
+    const result = (await client.callTool({
+      name: 'delete_zone',
+      arguments: { zone: 'example.com' },
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain('declined');
+    expect(calls.some((c) => c.init?.method === 'DELETE')).toBe(false);
+  });
+
+  it('deletes nothing when the user closes the dialog', async () => {
+    // Cancel is not a yes: for an irreversible delete the only safe reading of
+    // "no answer" is no.
+    const calls = stubFetch(zoneRoutes);
+    const client = await connectClient(config, 'cancel');
+    const result = (await client.callTool({
+      name: 'delete_zone',
+      arguments: { zone: 'example.com' },
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+    expect(calls.some((c) => c.init?.method === 'DELETE')).toBe(false);
+  });
+
+  it('offers no token to a client it can ask properly', async () => {
+    // The control that makes the three above mean something: the token path is
+    // unchanged, so a server that silently never asked would still pass every
+    // other confirmation test in this file.
+    stubFetch(zoneRoutes);
+    const client = await connectClient(config, 'decline');
+    const result = (await client.callTool({
+      name: 'delete_zone',
+      arguments: { zone: 'example.com' },
+    })) as CallToolResult;
+    expect(resultText(result)).not.toContain('confirm_token=');
+  });
+});
+
+describe('declining, on every guarded tool', () => {
+  // One accept case is enough to prove the path works; a decline case per tool
+  // is what proves each of them *acts on* the answer rather than falling
+  // through. They differ only in arguments, so they are written as a table.
+  const routes = () =>
+    jsonResponse({
+      zone: { id: 1, record_count: 3 },
+      rrset: {
+        name: 'www',
+        type: 'A',
+        ttl: 300,
+        records: [{ value: '1.2.3.4' }],
+      },
+      action: { id: 7, status: 'running' },
+    });
+
+  it.each([
+    ['import_zonefile', { zone: 'example.com', zonefile: '@ IN A 1.2.3.4' }],
+    [
+      'set_records',
+      {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '5.6.7.8' }],
+      },
+    ],
+    [
+      'remove_records',
+      {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '1.2.3.4' }],
+      },
+    ],
+    ['change_zone_protection', { zone: 'example.com', delete: false }],
+    [
+      'change_rrset_protection',
+      { zone: 'example.com', name: 'www', type: 'A', change: false },
+    ],
+  ])('%s does nothing when the user declines', async (name, args) => {
+    const calls = stubFetch(routes);
+    const client = await connectClient(config, 'decline');
+    const result = (await client.callTool({
+      name,
+      arguments: args as Record<string, unknown>,
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toContain('declined');
+    expect(
+      calls.some((c) =>
+        ['POST', 'PUT', 'DELETE'].includes(c.init?.method ?? '')
+      )
+    ).toBe(false);
+  });
+});
+
 describe('confirmation tokens', () => {
   it('refuses the first delete_zone call and executes the second one', async () => {
     const calls = stubFetch((_url, init) =>
@@ -289,13 +554,17 @@ describe('confirmation tokens', () => {
       arguments: { zone: 'example.com' },
     })) as CallToolResult;
 
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    // The prompt is an error result: what was asked for did not happen.
     expect(refused.isError).toBe(true);
     expect(resultText(refused)).toContain('12 records');
     expect(calls.some((c) => c.init?.method === 'DELETE')).toBe(false);
 
     const result = (await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'example.com', confirmToken: tokenFrom(refused) },
+      arguments: { zone: 'example.com', confirm_token: tokenFrom(refused) },
     })) as CallToolResult;
 
     expect(result.isError).toBeUndefined();
@@ -310,7 +579,7 @@ describe('confirmation tokens', () => {
 
     const result = (await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'example.com', confirmToken: 'f'.repeat(32) },
+      arguments: { zone: 'example.com', confirm_token: 'f'.repeat(32) },
     })) as CallToolResult;
 
     expect(result.isError).toBe(true);
@@ -328,7 +597,7 @@ describe('confirmation tokens', () => {
 
     const result = (await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'other.example', confirmToken: tokenFrom(refused) },
+      arguments: { zone: 'other.example', confirm_token: tokenFrom(refused) },
     })) as CallToolResult;
 
     expect(result.isError).toBe(true);
@@ -351,11 +620,11 @@ describe('confirmation tokens', () => {
 
     await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'example.com', confirmToken: token },
+      arguments: { zone: 'example.com', confirm_token: token },
     });
     const replay = (await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'example.com', confirmToken: token },
+      arguments: { zone: 'example.com', confirm_token: token },
     })) as CallToolResult;
 
     expect(replay.isError).toBe(true);
@@ -388,7 +657,7 @@ describe('confirmation tokens', () => {
         name: 'www',
         type: 'A',
         records: [{ value: '198.51.100.66' }],
-        confirmToken: tokenFrom(refused),
+        confirm_token: tokenFrom(refused),
       },
     })) as CallToolResult;
 
@@ -438,6 +707,10 @@ describe('confirmation tokens', () => {
     })) as CallToolResult;
 
     // A broken cosmetic lookup must not block the operation either.
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    // The prompt is an error result: what was asked for did not happen.
     expect(refused.isError).toBe(true);
     const result = (await client.callTool({
       name: 'delete_rrset',
@@ -445,7 +718,7 @@ describe('confirmation tokens', () => {
         zone: 'example.com',
         name: 'www',
         type: 'A',
-        confirmToken: tokenFrom(refused),
+        confirm_token: tokenFrom(refused),
       },
     })) as CallToolResult;
 
@@ -467,6 +740,10 @@ describe('confirmation tokens', () => {
       name: 'change_zone_protection',
       arguments: { zone: 'example.com', delete: false },
     })) as CallToolResult;
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    // The prompt is an error result: what was asked for did not happen.
     expect(refused.isError).toBe(true);
     expect(calls).toHaveLength(1);
 
@@ -475,7 +752,7 @@ describe('confirmation tokens', () => {
       arguments: {
         zone: 'example.com',
         delete: false,
-        confirmToken: tokenFrom(refused),
+        confirm_token: tokenFrom(refused),
       },
     })) as CallToolResult;
     expect(result.isError).toBeUndefined();
@@ -506,6 +783,10 @@ describe('confirmation tokens', () => {
         change: false,
       },
     })) as CallToolResult;
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    // The prompt is an error result: what was asked for did not happen.
     expect(refused.isError).toBe(true);
     expect(calls).toHaveLength(1);
 
@@ -516,7 +797,7 @@ describe('confirmation tokens', () => {
         name: 'www',
         type: 'A',
         change: false,
-        confirmToken: tokenFrom(refused),
+        confirm_token: tokenFrom(refused),
       },
     })) as CallToolResult;
     expect(result.isError).toBeUndefined();
@@ -545,7 +826,7 @@ describe('set_records', () => {
 
     await client.callTool({
       name: 'set_records',
-      arguments: { ...args, confirmToken: tokenFrom(refused) },
+      arguments: { ...args, confirm_token: tokenFrom(refused) },
     });
 
     const post = calls.find((c) => c.init?.method === 'POST');
@@ -580,6 +861,10 @@ describe('zone apex', () => {
       tool: 'add_records',
       args: { records },
       url: `${base}/actions/add_records`,
+      // The apex is confirmed now: it is where SPF, DMARC and the zone's own NS
+      // set live, so adding there decides who answers rather than adding an
+      // answer. See shiftsAuthority.
+      confirmed: true,
     },
     {
       tool: 'remove_records',
@@ -618,7 +903,7 @@ describe('zone apex', () => {
       if (confirmed === true) {
         result = (await client.callTool({
           name: tool,
-          arguments: { ...callArgs, confirmToken: tokenFrom(result) },
+          arguments: { ...callArgs, confirm_token: tokenFrom(result) },
         })) as CallToolResult;
       }
 
@@ -652,7 +937,7 @@ describe('remove_records', () => {
 
     await client.callTool({
       name: 'remove_records',
-      arguments: { ...args, confirmToken: tokenFrom(refused) },
+      arguments: { ...args, confirm_token: tokenFrom(refused) },
     });
 
     expect(calls.find((c) => c.init?.method === 'POST')?.url).toBe(
@@ -675,12 +960,16 @@ describe('change_primary_nameservers', () => {
       arguments: args,
     })) as CallToolResult;
 
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    // The prompt is an error result: what was asked for did not happen.
     expect(refused.isError).toBe(true);
     expect(resultText(refused)).toContain('1 new primaries');
 
     await client.callTool({
       name: 'change_primary_nameservers',
-      arguments: { ...args, confirmToken: tokenFrom(refused) },
+      arguments: { ...args, confirm_token: tokenFrom(refused) },
     });
 
     expect(calls.find((c) => c.init?.method === 'POST')?.url).toBe(
@@ -702,6 +991,10 @@ describe('import_zonefile', () => {
       name: 'import_zonefile',
       arguments: { zone: 'example.com', zonefile: '@ IN A 198.51.100.1' },
     })) as CallToolResult;
+    // The first call is a question, not a failure. It used to come back as
+    // an error result; every other server in the fleet returned a plain one,
+    // and the shared approval path follows the majority.
+    // The prompt is an error result: what was asked for did not happen.
     expect(refused.isError).toBe(true);
     const token = tokenFrom(refused);
 
@@ -710,7 +1003,7 @@ describe('import_zonefile', () => {
       arguments: {
         zone: 'example.com',
         zonefile: '@ IN A 198.51.100.66',
-        confirmToken: token,
+        confirm_token: token,
       },
     })) as CallToolResult;
     expect(swapped.isError).toBe(true);
@@ -721,7 +1014,7 @@ describe('import_zonefile', () => {
       arguments: {
         zone: 'example.com',
         zonefile: '@ IN A 198.51.100.1',
-        confirmToken: token,
+        confirm_token: token,
       },
     });
 
@@ -900,10 +1193,15 @@ describe('result shaping', () => {
       arguments: { zone: 'example.com' },
     })) as CallToolResult;
 
+    // It used to cut the document at the ceiling and say so. A document cut
+    // mid-string is not a smaller answer, it is an unparseable one — which a
+    // text block tolerates and `structuredContent` cannot, since the two
+    // channels have to carry the same value. So it refuses, and names the way
+    // to ask for less.
+    expect(result.isError).toBe(true);
     const text = resultText(result);
-    expect(text).toContain('was cut off mid-document');
     expect(text).toContain('per_page');
-    expect(text.length).toBeLessThan(210_000);
+    expect(text.length).toBeLessThan(1000);
   });
 });
 
@@ -944,7 +1242,7 @@ describe('error handling', () => {
     })) as CallToolResult;
     const result = (await client.callTool({
       name: 'delete_zone',
-      arguments: { zone: 'example.com', confirmToken: tokenFrom(refused) },
+      arguments: { zone: 'example.com', confirm_token: tokenFrom(refused) },
     })) as CallToolResult;
 
     expect(result.isError).toBe(true);
@@ -1025,5 +1323,221 @@ describe('error handling', () => {
     const text = resultText(result);
     expect(text).toContain('(truncated)');
     expect(text.length).toBeLessThan(4000);
+  });
+});
+
+describe('what the gate is drawn around', () => {
+  // The gate used to be drawn around loss — "eight of the 22 tools can take a
+  // name off the internet, and DNS has no undo". That is the right question for
+  // a file and the wrong one for a zone: the dangerous act in DNS is making a
+  // claim, not withdrawing one, and none of the cases below removes anything.
+  const zone = 'example.com';
+  const write = (): FetchCall[] =>
+    stubFetch((_url, init) =>
+      init?.method === 'GET'
+        ? jsonResponse({ rrset: { records: [], ttl: 300 } })
+        : jsonResponse({ action: {} }, 201)
+    );
+
+  const authorityCases = [
+    // Senders try MX in ascending preference, so a 0 beside the real 10 wins
+    // all mail while leaving it in place.
+    { name: 'mail', type: 'MX', value: '0 mail.attacker.example.' },
+    // A zone cut: the parent starts issuing referrals for everything below.
+    { name: 'internal', type: 'NS', value: 'ns1.attacker.example.' },
+    // Decides which authority may issue certificates at all.
+    { name: '@', type: 'CAA', value: '0 issue "attacker-ca.example"' },
+    { name: 'www', type: 'CNAME', value: 'attacker.example.' },
+    // The apex carries SPF, DMARC and the zone's own NS set.
+    { name: '@', type: 'TXT', value: '"v=spf1 +all"' },
+    // Answers every name that does not exist yet.
+    { name: '*', type: 'A', value: '203.0.113.66' },
+  ] as const;
+
+  it.each(authorityCases)(
+    'confirms create_rrset for $name/$type',
+    async ({ name, type, value }) => {
+      const calls = write();
+      const client = await connectClient();
+      const result = (await client.callTool({
+        name: 'create_rrset',
+        arguments: { zone, name, type, records: [{ value }] },
+      })) as CallToolResult;
+
+      expect(resultText(result)).toContain('confirm_token=');
+      expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
+    }
+  );
+
+  it.each(authorityCases)(
+    'confirms add_records for $name/$type',
+    async ({ name, type, value }) => {
+      const calls = write();
+      const client = await connectClient();
+      const result = (await client.callTool({
+        name: 'add_records',
+        arguments: { zone, name, type, records: [{ value }] },
+      })) as CallToolResult;
+
+      expect(resultText(result)).toContain('confirm_token=');
+      expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
+    }
+  );
+
+  it.each([
+    { name: 'www', type: 'A', value: '198.51.100.1' },
+    { name: 'api', type: 'AAAA', value: '2001:db8::1' },
+    // The one name whose purpose is to run unattended. A dialog on every
+    // certificate renewal buys nothing: the confirmation cannot tell a real
+    // ACME client from a forged token. CAA and CT monitoring defend this one.
+    { name: '_acme-challenge', type: 'TXT', value: '"token-goes-here"' },
+  ])(
+    'lets $name/$type through without asking',
+    async ({ name, type, value }) => {
+      const calls = write();
+      const client = await connectClient();
+      const result = (await client.callTool({
+        name: 'add_records',
+        arguments: { zone, name, type, records: [{ value }] },
+      })) as CallToolResult;
+
+      expect(result.isError).toBeUndefined();
+      expect(resultText(result)).not.toContain('confirm_token=');
+      expect(calls.at(-1)?.url).toContain('/actions/add_records');
+    }
+  );
+
+  it('acts once the confirmation comes back', async () => {
+    const calls = write();
+    const client = await connectClient();
+    const args = {
+      zone,
+      name: 'mail',
+      type: 'MX',
+      records: [{ value: '0 mail.attacker.example.' }],
+    };
+    const asked = (await client.callTool({
+      name: 'add_records',
+      arguments: args,
+    })) as CallToolResult;
+    const done = (await client.callTool({
+      name: 'add_records',
+      arguments: { ...args, confirm_token: tokenFrom(asked) },
+    })) as CallToolResult;
+
+    expect(done.isError).toBeUndefined();
+    expect(calls.at(-1)?.url).toContain('/actions/add_records');
+  });
+
+  it('binds the confirmation to the record values, not just the name', async () => {
+    write();
+    const client = await connectClient();
+    const base = { zone, name: 'mail', type: 'MX' };
+    const asked = (await client.callTool({
+      name: 'add_records',
+      arguments: { ...base, records: [{ value: '10 mx1.example.com.' }] },
+    })) as CallToolResult;
+
+    const swapped = (await client.callTool({
+      name: 'add_records',
+      arguments: {
+        ...base,
+        records: [{ value: '0 mail.attacker.example.' }],
+        confirm_token: tokenFrom(asked),
+      },
+    })) as CallToolResult;
+    expect(swapped.isError).toBe(true);
+  });
+});
+
+describe('the confirmation dialog', () => {
+  // Every requestApproval call in this repo used to pass numbers only, so the
+  // prompt was byte-identical whether the record pointed at the right address
+  // or the attacker's. "replace the records of www/A — it currently holds 1
+  // record" is true either way, and it is the only sentence the person sees.
+  it('shows the values the call is about to write', async () => {
+    stubFetch((_url, init) =>
+      init?.method === 'GET'
+        ? jsonResponse({
+            rrset: { records: [{ value: '198.51.100.1' }], ttl: 300 },
+          })
+        : jsonResponse({ action: {} }, 201)
+    );
+    const client = await connectClient();
+    const result = (await client.callTool({
+      name: 'set_records',
+      arguments: {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '203.0.113.66' }],
+      },
+    })) as CallToolResult;
+
+    const text = resultText(result);
+    expect(text).toContain('203.0.113.66');
+    expect(text).toContain('supplied by the caller, not by this server');
+  });
+
+  it('does not print a TSIG key into the dialog', async () => {
+    // The schema calls it a secret. A dialog is not the place for one.
+    stubFetch((_url, init) =>
+      init?.method === 'GET'
+        ? jsonResponse({ zone: { record_count: 12 } })
+        : jsonResponse({ action: {} }, 201)
+    );
+    const client = await connectClient();
+    const result = (await client.callTool({
+      name: 'change_primary_nameservers',
+      arguments: {
+        zone: 'example.com',
+        primary_nameservers: [
+          { address: '203.0.113.9', port: 53, tsig_key: 'super-secret-key' },
+        ],
+      },
+    })) as CallToolResult;
+
+    const text = resultText(result);
+    expect(text).toContain('203.0.113.9');
+    expect(text).not.toContain('super-secret-key');
+  });
+});
+
+describe('the ttl ceiling', () => {
+  it('refuses a ttl no resolver would honour', async () => {
+    // 2147483647 is 68 years and nothing caches it: BIND caps at a week,
+    // Unbound at a day. What it does buy is recovery time — a record served
+    // from caches long after it was removed at the authority.
+    stubFetch(() => jsonResponse({ action: {} }, 201));
+    const client = await connectClient();
+    const result = (await client.callTool({
+      name: 'add_records',
+      arguments: {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '198.51.100.1' }],
+        ttl: 2147483647,
+      },
+    })) as CallToolResult;
+    expect(result.isError).toBe(true);
+  });
+
+  it('still accepts a week', async () => {
+    const calls = stubFetch(() => jsonResponse({ action: {} }, 201));
+    const client = await connectClient();
+    const result = (await client.callTool({
+      name: 'add_records',
+      arguments: {
+        zone: 'example.com',
+        name: 'www',
+        type: 'A',
+        records: [{ value: '198.51.100.1' }],
+        ttl: 604800,
+      },
+    })) as CallToolResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(calls.at(-1)?.url).toContain('/actions/add_records');
   });
 });

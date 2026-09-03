@@ -1,4 +1,4 @@
-import { internalHostKind } from './hosts.js';
+import { internalHostKind } from 'mcp-internal-hosts';
 export interface Config {
   /**
    * Hetzner Cloud API token of the project that holds the DNS zones.
@@ -10,6 +10,14 @@ export interface Config {
   baseUrl: string;
   /** When true, only the read-only tools are registered at all. */
   readOnly: boolean;
+  /**
+   * Whether a client that *can* show a dialog is asked before a guarded tool
+   * acts. `ELICITATION=false` turns the dialog off — the guard stays and falls
+   * back to the two-call token, so there is no setting in which a guarded call
+   * goes unannounced.
+   */
+  elicitation: boolean;
+
   /**
    * Raw value of `HETZNER_ALLOW_TOOLS` — comma-separated tool names, `list_*`
    * prefixes, or `essential`. Kept unparsed on purpose: this file is a mirror
@@ -80,6 +88,31 @@ function normalizeBaseUrl(raw: string): string {
 }
 
 /**
+ * Reads `ELICITATION` — deliberately unprefixed, and deliberately fatal on
+ * anything it does not recognise.
+ *
+ * Unprefixed: environment variables are process-wide, so this is one switch for
+ * every server in the same environment. That is also its risk, which is why a
+ * server started with it off says so on its startup line.
+ *
+ * Fatal: this is the first variable of the family that defaults to *on*. The
+ * others fail open on a typo, which is the safe direction for them — including
+ * `HETZNER_READ_ONLY` right above, which is deliberately generous about what it
+ * accepts. Here a typo would leave the dialog running while the operator
+ * believes it is off, and an operator who believes that has no way to find out.
+ */
+export function parseElicitation(raw: string | undefined): boolean {
+  const value = raw?.trim().toLowerCase();
+  if (value === undefined || value === '' || value === 'true') return true;
+  if (value === 'false') return false;
+  console.error(
+    `hetzner-dns-mcp: ELICITATION must be "true" or "false" — got "${raw}". ` +
+      'Refusing to start rather than guess.'
+  );
+  process.exit(1);
+}
+
+/**
  * Reads the configuration from environment variables.
  *
  * A missing token is only a warning, not a fatal error: the server must be
@@ -94,10 +127,14 @@ function normalizeBaseUrl(raw: string): string {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const token = env.HETZNER_API_TOKEN;
   const rawBaseUrl = env.HETZNER_API_BASE_URL;
-  const readOnly = /^(1|true|yes)$/i.test(env.HETZNER_READ_ONLY ?? '');
+  const readOnly = /^(1|true|yes)$/i.test(env.HETZNER_READ_ONLY?.trim() ?? '');
 
   delete env.HETZNER_API_TOKEN;
   delete env.HETZNER_API_BASE_URL;
+
+  // After the deletes, deliberately: this one can exit the process, and an exit
+  // above would leave the token in the environment for whatever runs next.
+  const elicitation = parseElicitation(env.ELICITATION);
 
   if (!token) {
     console.error(`hetzner-dns-mcp: ${MISSING_TOKEN_MESSAGE}`);
@@ -105,6 +142,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (readOnly) {
     console.error(
       'hetzner-dns-mcp: HETZNER_READ_ONLY is set — only read-only tools are registered'
+    );
+  }
+  // Printed only when it is off, like the line above. ELICITATION is
+  // unprefixed, so one `export ELICITATION=false` reaches every MCP server in
+  // the environment — this line is what makes that visible in the log of each
+  // one it actually reached.
+  if (!elicitation) {
+    console.error(
+      'hetzner-dns-mcp: ELICITATION=false — guarded tools fall back to the two-call token'
     );
   }
 
@@ -115,6 +161,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         ? normalizeBaseUrl(rawBaseUrl)
         : DEFAULT_BASE_URL,
     readOnly,
+    elicitation,
     allowTools: env.HETZNER_ALLOW_TOOLS,
     denyTools: env.HETZNER_DENY_TOOLS,
   };

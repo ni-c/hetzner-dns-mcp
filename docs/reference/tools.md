@@ -1,8 +1,22 @@
 # Tools
 
 22 tools, in three groups. Tools marked **read-only** are the ones that survive
-`HETZNER_READ_ONLY=true`; tools marked **needs `confirmToken`** refuse their
-first call and return a token (see [Security](/guide/security#confirmation-tokens)).
+`HETZNER_READ_ONLY=true`; tools marked 👤 **ask a person** before they act,
+through MCP elicitation — a dialog the model cannot answer on its behalf. Where
+the client cannot show one they fall back to a two-call `confirm_token`, and
+`ELICITATION=false` takes that fallback deliberately. See
+[Asking a person](/guide/approval).
+
+Every tool declares an `outputSchema` and answers with `structuredContent` beside
+the text block, so a client can use a result without parsing prose. All of them
+carry `untrusted: true` and `source: "hetzner-cloud-api"` as fields of that
+object — there is no exception list, because record values, comments, labels and
+zone files are written by whoever controls the zone. The `<untrusted-data>` fence
+stays in the text block, where it is the readable presentation of that marker.
+
+Every tool declares all four MCP annotations — `readOnlyHint`, `destructiveHint`,
+`idempotentHint`, `openWorldHint`. `openWorldHint` is `false` throughout: this
+server talks to the one Hetzner Cloud API it is configured for.
 
 All 22 are registered unless you say otherwise. `HETZNER_ALLOW_TOOLS` and
 `HETZNER_DENY_TOOLS` narrow the list to the ones you want, and `essential`
@@ -58,12 +72,12 @@ other properties have their own `change_zone_*` tools.
 
 **Arguments:** `zone`, `labels`
 
-### `delete_zone` <Badge type="danger" text="needs confirmToken" />
+### `delete_zone` 👤 <Badge type="danger" text="asks a person" />
 
 Permanently delete a zone and every record in it. The refusal reports how many
 records the zone holds.
 
-**Arguments:** `zone`, `confirmToken?`
+**Arguments:** `zone`, `confirm_token?`
 
 ### `export_zonefile` <Badge type="tip" text="read-only" />
 
@@ -72,13 +86,13 @@ is the only backup you get.
 
 **Arguments:** `zone`
 
-### `import_zonefile` <Badge type="danger" text="needs confirmToken" />
+### `import_zonefile` 👤 <Badge type="danger" text="asks a person" />
 
 Import a BIND zone file into an existing primary zone, **replacing** its current
-records. The token is bound to a hash of the zone file, so a confirmation for
+records. The approval is bound to a hash of the zone file, so a confirmation for
 one import cannot execute a different one. Returns an action to poll.
 
-**Arguments:** `zone`, `zonefile`, `confirmToken?`
+**Arguments:** `zone`, `zonefile`, `confirm_token?`
 
 ### `change_zone_ttl`
 
@@ -86,20 +100,20 @@ Change the zone's default TTL, which applies to RRSets without an explicit one.
 
 **Arguments:** `zone`, `ttl`
 
-### `change_zone_protection` <Badge type="danger" text="needs confirmToken to disable" />
+### `change_zone_protection` 👤 <Badge type="danger" text="asks a person before it disables" />
 
 Enable or disable delete protection. Enabling is immediate; disabling removes
 the last safeguard in front of `delete_zone` and is gated like a deletion.
 
-**Arguments:** `zone`, `delete` (boolean), `confirmToken?`
+**Arguments:** `zone`, `delete` (boolean), `confirm_token?`
 
-### `change_primary_nameservers` <Badge type="danger" text="needs confirmToken" />
+### `change_primary_nameservers` 👤 <Badge type="danger" text="asks a person" />
 
 Replace the primary nameservers of a secondary zone. The entire zone content is
 taken from the new primaries on the next transfer. The token is bound to the
 nameserver list.
 
-**Arguments:** `zone`, `primary_nameservers`, `confirmToken?`
+**Arguments:** `zone`, `primary_nameservers`, `confirm_token?`
 
 Each entry: `{ address, port?, tsig_key?, tsig_algorithm? }` with
 `tsig_algorithm` one of `hmac-md5`, `hmac-sha1`, `hmac-sha256`.
@@ -126,9 +140,12 @@ A single RRSet by name and type.
 ### `create_rrset`
 
 Create a new RRSet. Fails if one with the same name and type exists — use
-`set_records` or `add_records` then.
+`set_records` or `add_records` then. Gated only when the record decides who
+answers for a name — see
+[Asking a person](/guide/approval#why-adding-is-not-automatically-safe).
 
-**Arguments:** `zone`, `name`, `type`, `records`, `ttl?`, `labels?`
+**Arguments:** `zone`, `name`, `type`, `records`, `ttl?`, `labels?`,
+`confirm_token?`
 
 ### `update_rrset`
 
@@ -136,32 +153,33 @@ Replace the labels of an RRSet. Records and TTL have their own tools.
 
 **Arguments:** `zone`, `name`, `type`, `labels`
 
-### `delete_rrset` <Badge type="danger" text="needs confirmToken" />
+### `delete_rrset` 👤 <Badge type="danger" text="asks a person" />
 
 Permanently delete an RRSet with all its records.
 
-**Arguments:** `zone`, `name`, `type`, `confirmToken?`
+**Arguments:** `zone`, `name`, `type`, `confirm_token?`
 
-### `set_records` <Badge type="danger" text="needs confirmToken" />
+### `set_records` 👤 <Badge type="danger" text="asks a person" />
 
 Replace **all** records of an RRSet. Anything not listed is removed. The token
 is bound to a hash of the record list.
 
-**Arguments:** `zone`, `name`, `type`, `records`, `confirmToken?`
+**Arguments:** `zone`, `name`, `type`, `records`, `confirm_token?`
 
 ### `add_records`
 
 Append records to an RRSet, keeping the existing ones. Creates the RRSet if it
-does not exist. Not gated — it adds rather than replaces.
+does not exist. Gated only when the record decides who answers for a name — see
+[Asking a person](/guide/approval#why-adding-is-not-automatically-safe).
 
 **Arguments:** `zone`, `name`, `type`, `records`, `ttl?`
 
-### `remove_records` <Badge type="danger" text="needs confirmToken" />
+### `remove_records` 👤 <Badge type="danger" text="asks a person" />
 
 Remove specific records, matched by value. Removing the last one deletes the
 RRSet. The token is bound to a hash of the record list.
 
-**Arguments:** `zone`, `name`, `type`, `records`, `confirmToken?`
+**Arguments:** `zone`, `name`, `type`, `records`, `confirm_token?`
 
 ### `change_rrset_ttl`
 
@@ -169,12 +187,12 @@ Change an RRSet's TTL, or pass `null` to fall back to the zone default.
 
 **Arguments:** `zone`, `name`, `type`, `ttl` (nullable)
 
-### `change_rrset_protection` <Badge type="danger" text="needs confirmToken to disable" />
+### `change_rrset_protection` 👤 <Badge type="danger" text="asks a person before it disables" />
 
 Enable or disable change protection. A protected RRSet cannot be changed or
 deleted. Disabling is gated.
 
-**Arguments:** `zone`, `name`, `type`, `change` (boolean), `confirmToken?`
+**Arguments:** `zone`, `name`, `type`, `change` (boolean), `confirm_token?`
 
 ## Actions
 

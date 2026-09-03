@@ -1,6 +1,6 @@
 # Environment variables
 
-Five variables, all read once at startup. There is no config file.
+Six variables, all read once at startup. There is no config file.
 
 ## `HETZNER_API_TOKEN`
 
@@ -35,6 +35,29 @@ When set, only these seven tools are registered:
 The write tools are not registered at all, so a client asking for `delete_zone`
 gets a protocol-level "tool not found". This is not a call-time refusal — there
 is no code path from a write request to the API.
+
+## `ELICITATION`
+
+**Optional**, default `true`. Whether a client that _can_ show a dialog is asked
+before a guarded tool acts. `false` takes the two-call-token path instead — it
+does not remove the guard, and a server started with it off prints one line
+saying so.
+
+Two ways it differs from every other variable here, and the first is worth
+reading twice:
+
+- **No prefix.** One `export ELICITATION=false` reaches every MCP server in the
+  same environment, not just this one. That is the point of it and also its
+  risk; see [Asking a person](/guide/approval).
+- **Fatal on anything else.** Where `HETZNER_READ_ONLY` is deliberately generous
+  — `true`, `1` or `yes` — this one takes `true` or `false` and stops the server
+  with exit code 1 on anything else. It is the only variable of this family that
+  defaults to _on_, and a typo that fell back to the default would leave the
+  dialog running while you believed it was off.
+
+Values are trimmed and matched case-insensitively. It is read _after_
+`HETZNER_API_TOKEN` is deleted from `process.env`, so the fatal path cannot leave
+the token sitting there for a crash reporter.
 
 ## `HETZNER_API_BASE_URL`
 

@@ -1,11 +1,5 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
-import type { Config } from '../src/config.js';
-import { createServer } from '../src/server.js';
-import { ToolFilterError } from '../src/tool-filter.js';
 import {
   ALL_TOOLS,
   ESSENTIAL_TOOLS,
@@ -13,10 +7,15 @@ import {
   WRITE_TOOLS,
 } from '../src/tools/catalogue.js';
 
+import type { Config } from '../src/config.js';
+import { createServer } from '../src/server.js';
+import { ToolFilterError } from 'mcp-tool-allowlist';
+
 const base: Config = {
   token: 'test-token',
   baseUrl: 'https://api.hetzner.test/v1',
   readOnly: false,
+  elicitation: true,
   allowTools: undefined,
   denyTools: undefined,
 };
@@ -113,19 +112,6 @@ describe('selecting tools', () => {
     );
   });
 
-  it('trims entries, ignores case and skips empty ones', async () => {
-    expect(
-      await toolNames({ allowTools: ' LIST_ZONES ,, get_zone, ' })
-    ).toEqual(['get_zone', 'list_zones']);
-  });
-
-  it('treats an empty value as no filter at all', async () => {
-    // `HETZNER_ALLOW_TOOLS=` in a compose file must not mean "allow nothing".
-    expect(await toolNames({ allowTools: '   ' })).toEqual(
-      [...ALL_TOOLS].sort()
-    );
-  });
-
   it('leaves an unconfigured server untouched', async () => {
     expect(await toolNames()).toEqual([...ALL_TOOLS].sort());
   });
@@ -154,15 +140,15 @@ describe('a filtered-out tool', () => {
       client.connect(clientTransport),
     ]);
 
-    const result = (await client.callTool({
-      name: 'delete_zone',
-      arguments: { zone: 'example.com' },
-    })) as CallToolResult;
-
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain(
-      'Tool delete_zone not found'
-    );
+    // SDK v2 reports an unknown tool as a JSON-RPC error rather than as a
+    // result carrying isError. Either way the call fails and nothing reaches
+    // the API, which is what this test is about.
+    await expect(
+      client.callTool({
+        name: 'delete_zone',
+        arguments: { zone: 'example.com' },
+      })
+    ).rejects.toThrow('Tool delete_zone not found');
     expect(calls).toHaveLength(0);
   });
 });
@@ -176,21 +162,6 @@ describe('refusing an unusable list', () => {
     );
     expect(() => createServer(config({ allowTools: 'list_zonez' }))).toThrow(
       /no tool matches "list_zonez".*list_zones/s
-    );
-  });
-
-  it('rejects a pattern that matches nothing', () => {
-    expect(() => createServer(config({ allowTools: 'lst_*' }))).toThrow(
-      /no tool matches "lst_\*"/
-    );
-  });
-
-  it('rejects a pattern with the star anywhere but last', () => {
-    expect(() => createServer(config({ allowTools: '*_zone' }))).toThrow(
-      /single trailing "\*"/
-    );
-    expect(() => createServer(config({ allowTools: 'list_*_x' }))).toThrow(
-      /single trailing "\*"/
     );
   });
 
@@ -249,7 +220,7 @@ describe('together with read-only mode', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(() =>
       createServer(config({ ...readOnly, allowTools: 'create_*' }))
-    ).toThrow(/only write tools, but HETZNER_READ_ONLY is set/);
+    ).toThrow(/read-only mode suppresses.*HETZNER_READ_ONLY is set/s);
   });
 
   it('does not apply the write-tool rule to the deny list', async () => {

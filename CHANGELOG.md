@@ -7,6 +7,180 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [Unreleased]
+
+### Added
+
+- Every tool declares an `outputSchema` and answers with `structuredContent`
+  beside the text block. A client no longer has to parse prose to use a result.
+
+  All twenty-two carry `untrusted: true` and `source: "hetzner-cloud-api"` as
+  fields — there is no exception list, because record values, comments, labels
+  and zone files are written by whoever controls the zone and no tool here
+  answers with anything else. The `<untrusted-data>` fence stays in the text
+  block, where it is the readable presentation of the same marker.
+
+  The API documents are described as open objects with the top-level keys the
+  spec guarantees. A strict shape would turn a field Hetzner adds into a tool
+  that fails outright, since the SDK validates each result against its schema.
+
+### Fixed
+
+- Secret redaction and the per-value truncation now run over the structured
+  value as well. Both ran as a `JSON.stringify` replacer, which reached every
+  string in the document for free; a value handed over as `structuredContent`
+  is not text, so the same pass has to walk the tree. Without it the two
+  channels of one answer would have differed in exactly the fields this server
+  redacts — and the machine-readable one would have been the unredacted half.
+
+### Changed
+
+- The advertised schemas avoid a spelling that is legal JSON Schema and still
+  gets a tool refused, or its constraint silently dropped, by some MCP clients:
+  an open object now writes `"additionalProperties": true` rather than the
+  empty schema `{}` zod emits for it. What the tools accept and return is
+  unchanged; only the way the schema says so is.
+
+- An over-budget result is an error rather than a document cut off
+  mid-string. That was fine for a text block and is impossible for
+  `structuredContent`, which has to parse, and the two channels have to carry
+  the same value.
+
+- The two-call `confirm_token` prompt is an error result. What was asked for
+  did not happen, which is what `isError` says. The text is unchanged and still
+  carries the token.
+
+### Changed
+
+- **The confirmation gate is drawn around authority, not around loss.** It used
+  to be "eight of the 22 tools can take a name off the internet"; that is the
+  right question for a file and half of it for a zone. The dangerous act in DNS
+  is making a claim, not withdrawing one, and none of these removes anything:
+
+  - an `MX` at preference `0` beside the real one wins all mail, because senders
+    try ascending preference (RFC 5321 §5.1) and the existing record stays
+  - an `NS` on a subname creates a zone cut, and the parent starts issuing
+    referrals for everything beneath it
+  - a `TXT` at `_acme-challenge` is a valid DNS-01 response — RFC 8555 §8.4 says
+    the CA verifies "one of" the records, so an _added_ one is enough for a
+    publicly trusted certificate
+  - a `CAA` decides which authority may issue at all
+
+  `create_rrset` and `add_records` therefore ask when the type is `NS`, `DS`,
+  `MX`, `CNAME`, `CAA`, `TLSA`, `SVCB`, `HTTPS` or `SRV`, when the name is the
+  apex `@`, or when it contains `*`. `www/A` still goes through untouched.
+
+  **`_acme-challenge` `TXT` is deliberately exempt.** Its whole purpose is to run
+  unattended, and a dialog on every certificate renewal buys nothing — the
+  confirmation cannot tell a real ACME client from a forged token. `CAA` (now
+  gated) and Certificate Transparency monitoring are what defend that name, and
+  the guide says so.
+
+- **The dialog shows the values the call is about to write.** No
+  `requestApproval` in this repo passed `details`, so the prompt was
+  byte-identical whether the record pointed where you meant or somewhere else:
+  "replace the records of `www/A` — it currently holds 1 record" is true either
+  way, and it was the only sentence a person saw. `change_primary_nameservers`
+  named no address at all.
+
+  The rule that kept them out was applied one step too broadly. Values that come
+  _back from the API_ are written by whoever controls the zone and stay out.
+  Values that go _into_ the call come from the model and are the thing being
+  decided about. `renderDetails` prints them under "supplied by the caller, not
+  by this server", collapsed and capped. A `tsig_key` is never printed.
+
+- `ttl` is capped at 604800 (one week) instead of the protocol maximum of 2147483647. No resolver honours more — BIND caps at a week, Unbound at a day —
+  so the larger values buy nothing except recovery time for whoever set them: a
+  record served from caches long after it was removed at the authority.
+
+### Added
+
+- Tools that need a confirmation now **ask the user**, on clients that can show
+  a prompt. The two-call `confirm_token` remains for clients that cannot, so
+  nothing that works today stops working — but where a person can be asked, one
+  is, instead of a token that only proves the same call was made twice.
+
+- `ELICITATION` switches the dialog off — `false` sends a client that could have
+  been asked down the two-call-token path instead. For a scheduled job or a test
+  harness, where a dialog is the wrong shape rather than an unwanted one.
+
+  It does **not** remove the guard: there is no setting in which a guarded call
+  goes unannounced. Two deliberate rough edges come with it. The variable is
+  **not prefixed**, so one `export ELICITATION=false` reaches every MCP server in
+  the environment — which is why a server started with it off prints a line
+  saying so, and why the fallback text names the server instead of blaming a
+  client that was working fine. And a value that is neither `true` nor `false`
+  **stops the server**, where `HETZNER_READ_ONLY` right beside it deliberately
+  accepts `true`, `1` and `yes`: this is the only variable here that defaults to
+  _on_, so failing open on a typo would leave the dialog running while the
+  operator believed it was off. It is read after `HETZNER_API_TOKEN` is wiped
+  from the environment, so that exit cannot leave the token behind.
+
+- A `docs/guide/approval.md` page.
+
+### Fixed
+
+- The annotation comment on `update_rrset` claimed it "replaces the records of an
+  RRSet, exactly like `set_records`". It replaces an RRSet's **labels** —
+  organisational metadata — and its description said so all along. The comment
+  was on its way to earning the tool a confirmation dialog it does not need: no
+  name goes off the internet. It stays marked destructive, because Hetzner keeps
+  no history of labels either.
+
+### Changed
+
+- **BREAKING: the confirmation parameter is now `confirm_token`, not
+  `confirmToken`.** This server was the only one of seventeen spelling it in
+  camelCase. A call passing `confirmToken` is rejected as an unknown argument;
+  pass `confirm_token` instead. Nothing else about the two-call flow changed.
+
+- Runs on **MCP SDK 2.0**. Existing clients see the same protocol revision they
+  always did; the change is the package layout behind it, and it is what lets
+  the dialog above work on both protocol eras from one code path — including
+  behind a stateless gateway, where the older mechanism silently fell back to
+  the weaker token for every client.
+
+- The linter is **oxlint** instead of eslint plus typescript-eslint, which
+  lifts the TypeScript ceiling: typescript-eslint pins `typescript` below 6.1,
+  so this repository was held on TypeScript 6 by its linter rather than by its
+  code.
+
+- The tool filter, the confirmation store, the host classifier and the
+  documentation-asset generator now come from **`mcp-tool-allowlist`**,
+  **`mcp-approval`**, **`mcp-internal-hosts`** and **`svg-asset-set`** rather
+  than from copies kept here — 863 fewer lines, and one place to fix each. None
+  of them has a runtime dependency of its own.
+
+- The first call of a guarded tool returns a plain result rather than an error
+  result. It is a question, not a failure, and every other server in the fleet
+  already answered it that way.
+
+- stdio is served through `serveStdio`, so the connection's era is negotiated
+  on the opening exchange rather than assumed. A client that pins the
+  `2026-07-28` era is served it; until now its `server/discover` probe was
+  answered with "Method not found" and only `2025-11-25` was on offer. A client
+  that speaks the older era sees no change — it is still pinned to one instance
+  for the life of the connection, exactly as a hand-wired
+  `StdioServerTransport` served it.
+
+### Fixed
+
+- Confirmation tokens are compared with a **constant-time** comparison. The
+  copy in this repository used `!==`, which leaks through timing how much of a
+  guess was right. Reaching a token still requires having received it in a
+  previous tool result, so this closes a margin rather than a hole.
+
+- A `confirm_token` that does not match is now refused with the reason —
+  invalid, expired, or issued for different arguments — instead of being
+  answered with a fresh prompt. The second is self-healing when a token merely
+  expired and silent when the token was issued for something else, which is the
+  case the binding exists to catch.
+
+- An entry in `HETZNER_ALLOW_TOOLS` that is not tool-name-shaped is now
+  **redacted** in the error rather than quoted back. `HETZNER_API_TOKEN` and
+  `HETZNER_ALLOW_TOOLS` are adjacent lines in every compose file, and a paste
+  into the wrong one used to print the credential into the client's log.
+
 ## [0.4.0] - 2026-08-27
 
 ### Added

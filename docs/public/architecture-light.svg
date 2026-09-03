@@ -6,7 +6,7 @@
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 260" width="760" height="260" role="img" aria-labelledby="arch-title arch-desc">
   <title id="arch-title">Architecture of hetzner-dns-mcp</title>
-  <desc id="arch-desc">An MCP client speaks JSON-RPC over stdio to hetzner-dns-mcp, which validates arguments, gates destructive calls behind a confirmation token, and calls the Hetzner Cloud API over HTTPS. Responses pass back through a sanitizer.</desc>
+  <desc id="arch-desc">An MCP client speaks JSON-RPC over stdio to hetzner-dns-mcp, which validates arguments, puts destructive calls to a person first, and calls the Hetzner Cloud API over HTTPS. Responses pass back through a sanitizer.</desc>
 
   <style>
     .node { stroke-width: 1.25; }
@@ -50,7 +50,7 @@
   <text x="381" y="99" text-anchor="middle" class="label-mono">zod schemas · path guards</text>
 
   <rect class="node" x="266" y="122" width="230" height="34" rx="8" />
-  <text x="381" y="143" text-anchor="middle" class="label-mono">confirmation tokens</text>
+  <text x="381" y="143" text-anchor="middle" class="label-mono">asks a person</text>
 
   <rect class="node" x="266" y="166" width="230" height="34" rx="8" />
   <text x="381" y="187" text-anchor="middle" class="label-mono">redact · truncate · mark</text>

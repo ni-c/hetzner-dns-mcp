@@ -10,8 +10,8 @@
  *   npm run build
  *   node docs/demo-client.mjs
  */
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { Client } from '@modelcontextprotocol/client';
 
 const DIM = '\x1b[2m';
 const BOLD = '\x1b[1m';
