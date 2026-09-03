@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
-## [Unreleased]
+## [0.5.0] - 2026-09-03
 
 ### Added
 
@@ -24,14 +24,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spec guarantees. A strict shape would turn a field Hetzner adds into a tool
   that fails outright, since the SDK validates each result against its schema.
 
-### Fixed
+- Tools that need a confirmation now **ask the user**, on clients that can show
+  a prompt. The two-call `confirm_token` remains for clients that cannot, so
+  nothing that works today stops working — but where a person can be asked, one
+  is, instead of a token that only proves the same call was made twice.
 
-- Secret redaction and the per-value truncation now run over the structured
-  value as well. Both ran as a `JSON.stringify` replacer, which reached every
-  string in the document for free; a value handed over as `structuredContent`
-  is not text, so the same pass has to walk the tree. Without it the two
-  channels of one answer would have differed in exactly the fields this server
-  redacts — and the machine-readable one would have been the unredacted half.
+- `ELICITATION` switches the dialog off — `false` sends a client that could have
+  been asked down the two-call-token path instead. For a scheduled job or a test
+  harness, where a dialog is the wrong shape rather than an unwanted one.
+
+  It does **not** remove the guard: there is no setting in which a guarded call
+  goes unannounced. Two deliberate rough edges come with it. The variable is
+  **not prefixed**, so one `export ELICITATION=false` reaches every MCP server in
+  the environment — which is why a server started with it off prints a line
+  saying so, and why the fallback text names the server instead of blaming a
+  client that was working fine. And a value that is neither `true` nor `false`
+  **stops the server**, where `HETZNER_READ_ONLY` right beside it deliberately
+  accepts `true`, `1` and `yes`: this is the only variable here that defaults to
+  _on_, so failing open on a typo would leave the dialog running while the
+  operator believed it was off. It is read after `HETZNER_API_TOKEN` is wiped
+  from the environment, so that exit cannot leave the token behind.
+
+- A `docs/guide/approval.md` page.
 
 ### Changed
 
@@ -49,8 +63,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The two-call `confirm_token` prompt is an error result. What was asked for
   did not happen, which is what `isError` says. The text is unchanged and still
   carries the token.
-
-### Changed
 
 - **The confirmation gate is drawn around authority, not around loss.** It used
   to be "eight of the 22 tools can take a name off the internet"; that is the
@@ -93,42 +105,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the larger values buy nothing except recovery time for whoever set them: a
   record served from caches long after it was removed at the authority.
 
-### Added
-
-- Tools that need a confirmation now **ask the user**, on clients that can show
-  a prompt. The two-call `confirm_token` remains for clients that cannot, so
-  nothing that works today stops working — but where a person can be asked, one
-  is, instead of a token that only proves the same call was made twice.
-
-- `ELICITATION` switches the dialog off — `false` sends a client that could have
-  been asked down the two-call-token path instead. For a scheduled job or a test
-  harness, where a dialog is the wrong shape rather than an unwanted one.
-
-  It does **not** remove the guard: there is no setting in which a guarded call
-  goes unannounced. Two deliberate rough edges come with it. The variable is
-  **not prefixed**, so one `export ELICITATION=false` reaches every MCP server in
-  the environment — which is why a server started with it off prints a line
-  saying so, and why the fallback text names the server instead of blaming a
-  client that was working fine. And a value that is neither `true` nor `false`
-  **stops the server**, where `HETZNER_READ_ONLY` right beside it deliberately
-  accepts `true`, `1` and `yes`: this is the only variable here that defaults to
-  _on_, so failing open on a typo would leave the dialog running while the
-  operator believed it was off. It is read after `HETZNER_API_TOKEN` is wiped
-  from the environment, so that exit cannot leave the token behind.
-
-- A `docs/guide/approval.md` page.
-
-### Fixed
-
-- The annotation comment on `update_rrset` claimed it "replaces the records of an
-  RRSet, exactly like `set_records`". It replaces an RRSet's **labels** —
-  organisational metadata — and its description said so all along. The comment
-  was on its way to earning the tool a confirmation dialog it does not need: no
-  name goes off the internet. It stays marked destructive, because Hetzner keeps
-  no history of labels either.
-
-### Changed
-
 - **BREAKING: the confirmation parameter is now `confirm_token`, not
   `confirmToken`.** This server was the only one of seventeen spelling it in
   camelCase. A call passing `confirmToken` is rejected as an unknown argument;
@@ -164,6 +140,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StdioServerTransport` served it.
 
 ### Fixed
+
+- Secret redaction and the per-value truncation now run over the structured
+  value as well. Both ran as a `JSON.stringify` replacer, which reached every
+  string in the document for free; a value handed over as `structuredContent`
+  is not text, so the same pass has to walk the tree. Without it the two
+  channels of one answer would have differed in exactly the fields this server
+  redacts — and the machine-readable one would have been the unredacted half.
+
+- The annotation comment on `update_rrset` claimed it "replaces the records of an
+  RRSet, exactly like `set_records`". It replaces an RRSet's **labels** —
+  organisational metadata — and its description said so all along. The comment
+  was on its way to earning the tool a confirmation dialog it does not need: no
+  name goes off the internet. It stays marked destructive, because Hetzner keeps
+  no history of labels either.
 
 - Confirmation tokens are compared with a **constant-time** comparison. The
   copy in this repository used `!==`, which leaks through timing how much of a
