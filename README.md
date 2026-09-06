@@ -1,6 +1,7 @@
 # hetzner-dns-mcp
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ni-c/hetzner-dns-mcp/ci.yml?branch=main&label=CI)](https://github.com/ni-c/hetzner-dns-mcp/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ni-c/hetzner-dns-mcp/badge)](https://scorecard.dev/viewer/?uri=github.com/ni-c/hetzner-dns-mcp)
 [![npm version](https://img.shields.io/npm/v/hetzner-dns-mcp)](https://www.npmjs.com/package/hetzner-dns-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/hetzner-dns-mcp)](https://www.npmjs.com/package/hetzner-dns-mcp)
 [![node](https://img.shields.io/node/v/hetzner-dns-mcp)](https://nodejs.org)
