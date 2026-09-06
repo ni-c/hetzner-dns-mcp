@@ -39,6 +39,8 @@ Shared argument types:
 
 ### `list_zones` <Badge type="tip" text="read-only" />
 
+**essential**
+
 List the zones of the project with status, mode, default TTL, assigned
 nameservers and record counts.
 
@@ -46,6 +48,8 @@ nameservers and record counts.
 `label_selector?` (e.g. `env=prod`), `page?`, `per_page?`
 
 ### `get_zone` <Badge type="tip" text="read-only" />
+
+**essential**
 
 Full details of a single zone.
 
@@ -80,6 +84,8 @@ records the zone holds.
 **Arguments:** `zone`, `confirm_token?`
 
 ### `export_zonefile` <Badge type="tip" text="read-only" />
+
+**essential**
 
 Export the zone as a BIND zone file. Worth calling before any bulk change — it
 is the only backup you get.
@@ -126,6 +132,8 @@ replacing one value means passing the whole set.
 
 ### `list_rrsets` <Badge type="tip" text="read-only" />
 
+**essential**
+
 List the RRSets of a zone with records, TTLs and protection status.
 
 **Arguments:** `zone`, `name?`, `type?` (array, e.g. `["A", "AAAA"]`),
@@ -133,11 +141,15 @@ List the RRSets of a zone with records, TTLs and protection status.
 
 ### `get_rrset` <Badge type="tip" text="read-only" />
 
+**essential**
+
 A single RRSet by name and type.
 
 **Arguments:** `zone`, `name`, `type`
 
 ### `create_rrset`
+
+**essential**
 
 Create a new RRSet. Fails if one with the same name and type exists — use
 `set_records` or `add_records` then. Gated only when the record decides who
@@ -155,11 +167,15 @@ Replace the labels of an RRSet. Records and TTL have their own tools.
 
 ### `delete_rrset` 👤 <Badge type="danger" text="asks a person" />
 
+**essential**
+
 Permanently delete an RRSet with all its records.
 
 **Arguments:** `zone`, `name`, `type`, `confirm_token?`
 
 ### `set_records` 👤 <Badge type="danger" text="asks a person" />
+
+**essential**
 
 Replace **all** records of an RRSet. Anything not listed is removed. The token
 is bound to a hash of the record list.
