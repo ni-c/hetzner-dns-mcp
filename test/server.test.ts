@@ -168,7 +168,7 @@ describe('tool registration', () => {
     // channel that arrives before the first tool call.
     const instructions = (await connectClient()).getInstructions();
     expect(instructions).toBeTruthy();
-    expect(instructions).toMatch(/never (?:follow |as )instructions/i);
+    expect(instructions).toMatch(/never\s+(?:follow|as)\s+instructions/i);
   });
 
   it('exposes all expected tools', async () => {
