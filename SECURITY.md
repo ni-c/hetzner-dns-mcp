@@ -6,6 +6,10 @@ Please use [GitHub private vulnerability reporting](https://github.com/ni-c/hetz
 
 Only the latest release and the current `main` branch receive security fixes.
 
+## Supported versions
+
+Only the latest release and the current `main` branch receive security fixes.
+
 ## Trust model
 
 hetzner-dns-mcp is a stdio MCP server that manages real DNS zones. The `HETZNER_API_TOKEN` grants full access to every zone in its Hetzner Cloud project and is sent as a Bearer header to `HETZNER_API_BASE_URL` (https is enforced; plain http is only accepted for localhost, and URLs containing credentials are rejected). Anything that can read the server's process environment can read the token.
