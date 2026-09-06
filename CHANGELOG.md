@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
+## [Unreleased]
+
+### Changed
+
+- Source maps are no longer published in the npm tarball. Node reads them only
+  under `--enable-source-maps`, which nothing here sets, and the maps pointed at
+  a `src/` this package does not ship — so a stack trace under that flag named a
+  file nobody could open. `dist/**/*.js` is unchanged; the package is about a
+  fifth smaller.
+- `inlineSources` is off again. It was this package's own answer to that same
+  problem — embed the sources so the shipped maps are self-contained — and it
+  worked, at the cost of the largest map payload in the family. Now that the
+  maps do not ship at all it has nothing left to do, and one family should not
+  carry two answers to one question.
+
+[Unreleased]: https://github.com/ni-c/hetzner-dns-mcp/compare/v0.5.0...HEAD
+
 ## [0.5.0] - 2026-09-03
 
 ### Added
