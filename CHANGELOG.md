@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
-## [Unreleased]
+## [0.6.0] - 2026-09-07
 
 ### Changed
 
@@ -43,7 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   maps do not ship at all it has nothing left to do, and one family should not
   carry two answers to one question.
 
-[Unreleased]: https://github.com/ni-c/hetzner-dns-mcp/compare/v0.5.0...HEAD
+### Security
+
+- **mcp-approval 0.8.2.** A sealed dialog answer is single-use since 0.8.1: the same `requestState` presented again within its lifetime used to be accepted again, and with a resource key that is the same every time — a whole stream, a fixed set of targets — every replay landed. npm users on `^0.8.0` already had the fix; the Docker image is built from the lockfile and carried 0.8.0 until this release.
 
 ## [0.5.0] - 2026-09-03
 
