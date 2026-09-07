@@ -18,23 +18,40 @@ answer comes back, nothing happens.
 
 ## What asks, and when
 
-| Tool                         | When it asks                           |
-| ---------------------------- | -------------------------------------- |
-| `delete_zone`                | always                                 |
-| `delete_rrset`               | always                                 |
-| `import_zonefile`            | always, bound to the exact zone file   |
-| `set_records`                | always, bound to the exact record list |
-| `remove_records`             | always, bound to the exact record list |
-| `change_primary_nameservers` | always, bound to the exact server list |
-| `change_zone_protection`     | only when it **removes** protection    |
-| `change_rrset_protection`    | only when it **removes** protection    |
-| `create_rrset`               | when the record decides who answers    |
-| `add_records`                | when the record decides who answers    |
-| everything else              | never                                  |
+| Tool                         | When it asks                                          |
+| ---------------------------- | ----------------------------------------------------- |
+| `delete_zone`                | always                                                |
+| `delete_rrset`               | always                                                |
+| `import_zonefile`            | always, bound to the exact zone file                  |
+| `set_records`                | always, bound to the exact record list                |
+| `remove_records`             | always, bound to the exact record list                |
+| `change_primary_nameservers` | always, bound to the exact server list                |
+| `change_zone_protection`     | only when it **removes** protection                   |
+| `change_rrset_protection`    | only when it **removes** protection                   |
+| `create_rrset`               | when the record decides who answers                   |
+| `add_records`                | when the record decides who answers                   |
+| `create_zone`                | when it carries `primary_nameservers` or a `zonefile` |
+| everything else              | never                                                 |
 
 Protection is the asymmetric case. Switching it _on_ costs nothing and is asked
 about by nobody; switching it off is the step that makes the next delete possible,
 and that is where the question belongs.
+
+`create_zone` is the same shape as protection, from the other side. Creating an
+empty zone is additive and asks nobody. Creating one **with**
+`primary_nameservers` or a `zonefile` is not: those two arguments carry the entire
+content of the zone, and if the name is already delegated to Hetzner's
+nameservers, that content is what the internet is served. They are the same two
+payloads `change_primary_nameservers` and `import_zonefile` raise a dialog for —
+so without this, denying either of those tools would not have taken the capability
+away, only the name of it.
+
+The dialog binds every field the call will write, not only the one that triggered
+it. `add_records` writes a record list _and_ a TTL, `create_rrset` also writes
+labels, and `create_zone` writes five things; a token issued with one value of any
+of them cannot be redeemed with another. The values are shown in the dialog under
+"supplied by the caller, not by this server", so what a person reads is what the
+token binds.
 
 `update_rrset` is deliberately not on the list, and its own annotation used to say
 it should be — the comment claimed it replaced records “exactly like
@@ -60,6 +77,16 @@ So `create_rrset` and `add_records` ask when the type is one of those, when the
 name is the apex `@` — where SPF, DMARC and the zone's own `NS` set live — or
 when it contains `*`, which answers every name that does not exist yet.
 Everything else, `www/A` included, goes through without a dialog.
+
+That last one is a real gap and it is left open on purpose. An `A` record added
+beside an existing one takes a share of the traffic without anything being
+removed — a resolver hands out both — so by the argument above it belongs on the
+list. It is not on it because an address record is the single most common thing
+anybody does here, and a dialog in front of every one of them is how people learn
+to tick without reading; a guard everybody clicks through guards nothing. The
+destructive direction is gated whatever the type, and the additive direction is
+better defended by RRSet protection (`change_rrset_protection`) and by monitoring
+than by a question nobody reads.
 
 ### The deliberate exception
 

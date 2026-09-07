@@ -84,7 +84,84 @@ function normalizeBaseUrl(raw: string): string {
         'the HETZNER_API_TOKEN will be sent to this host'
     );
   }
-  return url.toString().replace(/\/+$/, '');
+  // `origin + pathname`, not the string that was typed. A query or a fragment
+  // in the variable used to be kept and glued in front of every path, so
+  // `…/v1?debug=1` produced `…/v1?debug=1/zones`. What was dropped is named
+  // rather than dropped in silence.
+  const dropped = [
+    url.search === '' ? '' : 'a query string',
+    url.hash === '' ? '' : 'a fragment',
+  ].filter((part) => part !== '');
+  if (dropped.length > 0) {
+    console.error(
+      `hetzner-dns-mcp: HETZNER_API_BASE_URL carried ${dropped.join(' and ')}; ` +
+        'only the origin and path are used.'
+    );
+  }
+  return `${url.origin}${trimTrailingSlashes(url.pathname)}`;
+}
+
+/**
+ * Removes trailing slashes without a regular expression.
+ *
+ * `/\/+$/` is tried from every position of a run of slashes and consumes the
+ * run each time, which is quadratic whenever the run is *not* at the end:
+ * measured here at 36 / 122 / 419 / 1626 ms for 10 000 / 20 000 / 40 000 /
+ * 80 000 slashes followed by one more character. It runs once, on the
+ * operator's own value, so this was never an attack — it is the one construct
+ * this family has now found in five servers, and an index walk costs nothing.
+ *
+ * The walk slices once at the end rather than per slash: `while (s.endsWith('/'))
+ * s = s.slice(0, -1)` copies the whole string per iteration and is the same
+ * quadratic in bytes.
+ */
+function trimTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 0 && path.charCodeAt(end - 1) === 0x2f) end -= 1;
+  return path.slice(0, end);
+}
+
+/**
+ * The shape a Hetzner Cloud API token has, checked before it is ever used.
+ *
+ * Hetzner issues 64 visible-ASCII characters; the band is wider so a future
+ * format still starts. What it is really for is the character set: a token with
+ * a line break in it — a paste wrapped by a terminal, or `$(cat token)` with
+ * something in the middle — reaches undici, whose refusal is
+ * `Headers.append: "Bearer <the whole token>" is an invalid header value.`,
+ * and `run`'s catch would answer the tool call with it. Verified on Node
+ * 24.5.0: the trailing newline of a shell substitution is trimmed by the
+ * Headers constructor, an inner one is not.
+ */
+const TOKEN_PATTERN = /^[!-~]{8,512}$/;
+
+/**
+ * Checks the token's shape and says nothing about its content.
+ *
+ * The message names the variable, the length and — when there is one — the
+ * *position* of the offending character, which is what an operator needs to
+ * find a wrapped paste. It never quotes the value: this is a credential, and
+ * stderr is the MCP client's log.
+ */
+function checkTokenShape(token: string): void {
+  if (TOKEN_PATTERN.test(token)) return;
+  let position = -1;
+  for (let index = 0; index < token.length; index += 1) {
+    const code = token.charCodeAt(index);
+    if (code < 0x21 || code > 0x7e) {
+      position = index;
+      break;
+    }
+  }
+  const where =
+    position === -1
+      ? ''
+      : ` The first character that cannot be in a token is at position ${position + 1}.`;
+  console.error(
+    `hetzner-dns-mcp: HETZNER_API_TOKEN is ${token.length} characters and does not look ` +
+      `like a Hetzner Cloud API token (visible ASCII, 8 to 512 characters).${where} ` +
+      'The value is not shown here on purpose. API calls will fail until it is fixed.'
+  );
 }
 
 /**
@@ -106,10 +183,28 @@ export function parseElicitation(raw: string | undefined): boolean {
   if (value === undefined || value === '' || value === 'true') return true;
   if (value === 'false') return false;
   console.error(
-    `hetzner-dns-mcp: ELICITATION must be "true" or "false" — got "${raw}". ` +
+    `hetzner-dns-mcp: ELICITATION must be "true" or "false" — got ${describeValue(raw)}. ` +
       'Refusing to start rather than guess.'
   );
   process.exit(1);
+}
+
+/**
+ * A configuration value, for a message whose purpose is to show the operator
+ * their typo.
+ *
+ * The purpose is real — "got x" is how somebody finds a stray quote — and so is
+ * the risk: `ELICITATION` is unprefixed and sits in the same env block as
+ * `HETZNER_API_TOKEN`, one line away in every compose file, and a value pasted
+ * into the wrong line is exactly what fails this parse. So a *short word* is
+ * quoted, and everything else is described by its length. A token is never a
+ * short word.
+ */
+function describeValue(raw: string | undefined): string {
+  if (raw === undefined) return 'nothing';
+  return /^[A-Za-z0-9_-]{1,12}$/.test(raw)
+    ? `"${raw}"`
+    : `a ${raw.length}-character value that is neither`;
 }
 
 /**
@@ -125,7 +220,10 @@ export function parseElicitation(raw: string | undefined): boolean {
  * diagnostic report, a future tool — then finds no token to leak.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const token = env.HETZNER_API_TOKEN;
+  // Trimmed: `HETZNER_API_TOKEN=$(cat token)` leaves the file's trailing
+  // newline on the value, which is a shape check failure for a token that is
+  // otherwise perfectly good.
+  const token = env.HETZNER_API_TOKEN?.trim() || undefined;
   const rawBaseUrl = env.HETZNER_API_BASE_URL;
   const readOnly = /^(1|true|yes)$/i.test(env.HETZNER_READ_ONLY?.trim() ?? '');
 
@@ -138,6 +236,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   if (!token) {
     console.error(`hetzner-dns-mcp: ${MISSING_TOKEN_MESSAGE}`);
+  } else {
+    checkTokenShape(token);
   }
   if (readOnly) {
     console.error(

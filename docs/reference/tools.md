@@ -55,14 +55,22 @@ Full details of a single zone.
 
 **Arguments:** `zone`
 
-### `create_zone`
+### `create_zone` 👤 <Badge type="danger" text="asks a person when it carries content" />
 
 Create a zone. `primary` for zones managed at Hetzner, `secondary` with
 `primary_nameservers` to transfer from external primaries. A primary zone can be
 initialized from a zone file in the same call.
 
 **Arguments:** `name`, `mode`, `ttl?`, `labels?`, `primary_nameservers?`,
-`zonefile?`
+`zonefile?`, `confirm_token?`
+
+Creating an empty zone is additive and asks nobody. Creating one **with
+`primary_nameservers` or a `zonefile` asks first**: those two arguments carry
+the whole content of the zone, and if the name is already delegated to Hetzner's
+nameservers, that content is what the internet is served. They are the same
+payloads [`change_primary_nameservers`](#change-primary-nameservers) and
+[`import_zonefile`](#import-zonefile) are guarded for, so denying either of
+those tools without this guard would not have taken the capability away.
 
 ::: warning
 A `tsig_key` inside `primary_nameservers` becomes part of the conversation
@@ -147,7 +155,7 @@ A single RRSet by name and type.
 
 **Arguments:** `zone`, `name`, `type`
 
-### `create_rrset`
+### `create_rrset` 👤 <Badge type="danger" text="asks a person for authority records" />
 
 **essential**
 
@@ -158,6 +166,9 @@ answers for a name — see
 
 **Arguments:** `zone`, `name`, `type`, `records`, `ttl?`, `labels?`,
 `confirm_token?`
+
+The confirmation binds `ttl` and `labels` as well as the record list: this call
+writes all three, so a token issued for one TTL cannot redeem another.
 
 ### `update_rrset`
 
@@ -182,13 +193,18 @@ is bound to a hash of the record list.
 
 **Arguments:** `zone`, `name`, `type`, `records`, `confirm_token?`
 
-### `add_records`
+### `add_records` 👤 <Badge type="danger" text="asks a person for authority records" />
 
 Append records to an RRSet, keeping the existing ones. Creates the RRSet if it
-does not exist. Gated only when the record decides who answers for a name — see
+does not exist — so denying `create_rrset` does not remove the ability to create
+one. Gated only when the record decides who answers for a name — see
 [Asking a person](/guide/approval#why-adding-is-not-automatically-safe).
 
-**Arguments:** `zone`, `name`, `type`, `records`, `ttl?`
+**Arguments:** `zone`, `name`, `type`, `records`, `ttl?`, `confirm_token?`
+
+The confirmation binds `ttl` as well as the record list: this call writes both,
+and a week-long TTL on a record somebody else added is how long the correction
+takes to reach the caches.
 
 ### `remove_records` 👤 <Badge type="danger" text="asks a person" />
 

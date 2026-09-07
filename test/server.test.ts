@@ -83,6 +83,14 @@ async function connectClient(
     server.connect(serverTransport),
     client.connect(clientTransport),
   ]);
+  // Listing once, on every connection, is what arms the SDK's *client-side*
+  // output-schema check: a client only validates `structuredContent` against a
+  // schema it has loaded. Without this line, none of the success paths in this
+  // file had ever run that check — 1577 lines of green tests, and every tool's
+  // answer validated by the server against a schema the server also wrote. It
+  // is one call and it is the difference between testing the server and
+  // testing what a real client sees.
+  await client.listTools();
   return Object.assign(client, { prompts });
 }
 
@@ -556,6 +564,35 @@ describe('declining, on every guarded tool', () => {
     [
       'change_rrset_protection',
       { zone: 'example.com', name: 'www', type: 'A', change: false },
+    ],
+    // The three conditional guards, with the arguments that trigger them.
+    [
+      'create_zone',
+      {
+        name: 'example.com',
+        mode: 'primary',
+        zonefile: '@ IN NS ns1.example.com.',
+      },
+    ],
+    [
+      'create_rrset',
+      {
+        zone: 'example.com',
+        name: 'sub',
+        type: 'NS',
+        records: [{ value: 'ns1.example.net.' }],
+        ttl: 3600,
+        labels: { env: 'prod' },
+      },
+    ],
+    [
+      'add_records',
+      {
+        zone: 'example.com',
+        name: 'sub',
+        type: 'MX',
+        records: [{ value: '0 mail.example.net.' }],
+      },
     ],
   ])('%s does nothing when the user declines', async (name, args) => {
     const calls = stubFetch(routes);
@@ -1195,7 +1232,15 @@ describe('result shaping', () => {
     expect(resultText(result)).toContain('[redacted]');
   });
 
-  it('truncates an oversized zone file instead of dumping it', async () => {
+  /**
+   * A zone file is the one string this server does not cut at the general
+   * 4000-character per-value cap, and the change is deliberate: 4000
+   * characters is about a hundred records, so the tool whose entire purpose is
+   * to hand over a zone was handing over a fragment of every real one. It is
+   * cut once, in the tool, at a ceiling the result budget can carry — and the
+   * note reports the length of the *document*, not of the previous cut.
+   */
+  it('hands over a whole zone file up to its own ceiling', async () => {
     const zonefile = 'x'.repeat(10_000);
     stubFetch(() => jsonResponse({ zonefile }));
     const client = await connectClient();
@@ -1206,8 +1251,22 @@ describe('result shaping', () => {
     })) as CallToolResult;
 
     const text = resultText(result);
-    expect(text).toContain('truncated, 10000 characters total');
-    expect(text.length).toBeLessThan(zonefile.length);
+    expect(text).not.toContain('truncated');
+    expect(text).toContain('x'.repeat(10_000));
+  });
+
+  it('truncates a zone file past that ceiling, and says how long it was', async () => {
+    stubFetch(() => jsonResponse({ zonefile: 'x'.repeat(400_000) }));
+    const client = await connectClient();
+
+    const result = (await client.callTool({
+      name: 'export_zonefile',
+      arguments: { zone: 'example.com' },
+    })) as CallToolResult;
+
+    const text = resultText(result);
+    expect(text).toContain('truncated, 400000 characters total');
+    expect(text.length).toBeLessThan(400_000);
   });
 
   it('caps the total result size as a backstop behind the per-value cap', async () => {
@@ -1355,7 +1414,9 @@ describe('error handling', () => {
     })) as CallToolResult;
 
     const text = resultText(result);
-    expect(text).toContain('(truncated)');
+    // The cut says how much was there, not just that there was more: a body
+    // this server shortened is a body the operator may want to look at whole.
+    expect(text).toContain('(truncated, 10000 characters total)');
     expect(text.length).toBeLessThan(4000);
   });
 });

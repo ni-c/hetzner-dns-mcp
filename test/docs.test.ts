@@ -1,9 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import type { CallToolResult } from '@modelcontextprotocol/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ALL_TOOLS, ESSENTIAL_TOOLS } from '../src/tools/catalogue.js';
+import {
+  asksAPerson,
+  connectClient,
+  jsonResponse,
+  stubFetch,
+} from './harness.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -134,12 +141,130 @@ function marked(markdown: string, marker: RegExp): string[] {
 }
 
 /**
- * The confirmation-marker check is absent here on purpose: it needs a client,
- * and this repository has no importable one — its `connect` lives inside
- * another test file, where importing it would re-register that file's suites.
- * When a `test/harness.ts` appears, the check from the rest of the family
- * belongs back in.
+ * Every call that must raise a dialog, and every call that must not.
+ *
+ * Driven through the server rather than read off a list, because the four
+ * conditional guards here — `create_zone` on its payload, `create_rrset` and
+ * `add_records` on the name and type, the two `change_*_protection` on the
+ * direction — are exactly the ones a hand-kept list gets wrong. The page marks
+ * a *tool*, so a tool with a conditional guard is marked and its condition is
+ * described in the prose; what this asserts is that the marked set and the set
+ * that actually asks are the same.
  */
+const ASKS: { name: string; arguments: Record<string, unknown> }[] = [
+  { name: 'delete_zone', arguments: { zone: 'example.com' } },
+  {
+    name: 'import_zonefile',
+    arguments: { zone: 'example.com', zonefile: '@ IN NS ns1.example.com.\n' },
+  },
+  {
+    name: 'change_zone_protection',
+    arguments: { zone: 'example.com', delete: false },
+  },
+  {
+    name: 'change_primary_nameservers',
+    arguments: {
+      zone: 'example.com',
+      primary_nameservers: [{ address: '198.51.100.9' }],
+    },
+  },
+  {
+    name: 'create_zone',
+    arguments: {
+      name: 'example.com',
+      mode: 'primary',
+      zonefile: '@ IN NS ns1.example.com.\n',
+    },
+  },
+  {
+    name: 'delete_rrset',
+    arguments: { zone: 'example.com', name: 'www', type: 'A' },
+  },
+  {
+    name: 'set_records',
+    arguments: {
+      zone: 'example.com',
+      name: 'www',
+      type: 'A',
+      records: [{ value: '198.51.100.1' }],
+    },
+  },
+  {
+    name: 'remove_records',
+    arguments: {
+      zone: 'example.com',
+      name: 'www',
+      type: 'A',
+      records: [{ value: '198.51.100.1' }],
+    },
+  },
+  {
+    name: 'change_rrset_protection',
+    arguments: { zone: 'example.com', name: 'www', type: 'A', change: false },
+  },
+  {
+    name: 'create_rrset',
+    arguments: {
+      zone: 'example.com',
+      name: 'sub',
+      type: 'NS',
+      records: [{ value: 'ns1.example.net.' }],
+    },
+  },
+  {
+    name: 'add_records',
+    arguments: {
+      zone: 'example.com',
+      name: 'sub',
+      type: 'MX',
+      records: [{ value: '0 mail.example.net.' }],
+    },
+  },
+];
+
+/** The other side of the conditional guards: these must act straight away. */
+const DOES_NOT_ASK: { name: string; arguments: Record<string, unknown> }[] = [
+  { name: 'create_zone', arguments: { name: 'example.com', mode: 'primary' } },
+  {
+    name: 'change_zone_protection',
+    arguments: { zone: 'example.com', delete: true },
+  },
+  {
+    name: 'change_rrset_protection',
+    arguments: { zone: 'example.com', name: 'www', type: 'A', change: true },
+  },
+  {
+    name: 'create_rrset',
+    arguments: {
+      zone: 'example.com',
+      name: 'www',
+      type: 'A',
+      records: [{ value: '198.51.100.1' }],
+    },
+  },
+  {
+    name: 'add_records',
+    arguments: {
+      zone: 'example.com',
+      name: 'www',
+      type: 'A',
+      records: [{ value: '198.51.100.1' }],
+    },
+  },
+  {
+    name: 'change_zone_ttl',
+    arguments: { zone: 'example.com', ttl: 3600 },
+  },
+  {
+    name: 'change_rrset_ttl',
+    arguments: { zone: 'example.com', name: 'www', type: 'A', ttl: 3600 },
+  },
+  { name: 'update_zone', arguments: { zone: 'example.com', labels: {} } },
+  {
+    name: 'update_rrset',
+    arguments: { zone: 'example.com', name: 'www', type: 'A', labels: {} },
+  },
+];
 
 describe('the tool reference', () => {
   it('documents every tool and no tool that does not exist', () => {
@@ -149,6 +274,33 @@ describe('the tool reference', () => {
   it('marks exactly the essential preset', () => {
     expect(marked(reference, /\*\*essential\*\*/).toSorted()).toEqual(
       ESSENTIAL_TOOLS.toSorted()
+    );
+  });
+
+  /**
+   * The check this file said belonged back in once a harness existed. It does
+   * now, and it caught what the comment predicted: three tools raise a dialog
+   * that the page did not mark.
+   */
+  it('marks exactly the tools that ask a person', async () => {
+    stubFetch(() => jsonResponse({ zone: {}, rrset: { records: [] } }));
+    const client = await connectClient();
+
+    const asking: string[] = [];
+    for (const call of ASKS) {
+      const result = (await client.callTool(call)) as CallToolResult;
+      if (asksAPerson(result)) asking.push(call.name);
+    }
+    for (const call of DOES_NOT_ASK) {
+      const result = (await client.callTool(call)) as CallToolResult;
+      expect(
+        asksAPerson(result),
+        `${call.name} asked for arguments that should not need it`
+      ).toBe(false);
+    }
+
+    expect(marked(reference, /👤/).toSorted()).toEqual(
+      [...new Set(asking)].toSorted()
     );
   });
 });

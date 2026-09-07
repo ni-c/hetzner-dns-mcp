@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server';
+import { orderedResourceKey } from 'mcp-approval';
 import { z } from 'zod';
 import {
   document,
@@ -10,17 +11,31 @@ import {
 import type { HetznerApi } from '../api.js';
 import { READ_ONLY } from './annotations.js';
 
-import { fingerprint } from '../resource-key.js';
+import {
+  actionEnvelope,
+  listEnvelope,
+  objectEnvelope,
+  recordOr,
+  safeIntegerOf,
+  stringOf,
+} from '../boundary.js';
 import { errorResult, jsonResult, run } from '../result.js';
 import {
   confirmTokenParam,
+  labelSelector,
   labels,
+  nameFilter,
   page,
   perPage,
+  primaryNameservers,
   ttl,
   zone,
+  zonefile as zonefileParam,
 } from '../schema.js';
 import type { ToolContext } from './context.js';
+
+/** Longest zone file this server renders into a result; the rest is counted. */
+const MAX_ZONEFILE_RESULT = 150_000;
 
 /**
  * The values a call is about to write, for the confirmation dialog.
@@ -72,29 +87,6 @@ function zonefileDetails(zonefile: string): { label: string; value: string }[] {
   return details;
 }
 
-const primaryNameservers = z
-  .array(
-    z.object({
-      address: z
-        .string()
-        .min(1)
-        .describe('Public IPv4 or IPv6 address of the primary nameserver'),
-      port: z.number().int().min(1).max(65535).optional().describe('Port'),
-      tsig_key: z
-        .string()
-        .optional()
-        .describe(
-          'TSIG key to use for the zone transfer. Treat as a secret — it becomes part of the conversation context.'
-        ),
-      tsig_algorithm: z
-        .enum(['hmac-md5', 'hmac-sha1', 'hmac-sha256'])
-        .optional()
-        .describe('TSIG algorithm'),
-    })
-  )
-  .min(1)
-  .describe('Primary nameservers to transfer the zone from (secondary zones)');
-
 /**
  * Counts what a destructive call is about to affect, for the confirmation text.
  *
@@ -107,13 +99,11 @@ async function zoneRecordCount(
   idOrName: string
 ): Promise<string> {
   try {
-    const response = (await api.get(
-      `/zones/${encodeURIComponent(idOrName)}`
-    )) as { zone?: { record_count?: number } };
-    const count = response.zone?.record_count;
-    return typeof count === 'number'
-      ? `${count} records`
-      : 'an unknown number of records';
+    const body = await api.get(`/zones/${encodeURIComponent(idOrName)}`);
+    const count = safeIntegerOf(recordOr(recordOr(body).zone).record_count);
+    return count === undefined
+      ? 'an unknown number of records'
+      : `${count} records`;
   } catch {
     return 'an unknown number of records';
   }
@@ -129,16 +119,14 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       description:
         'List the DNS zones of the Hetzner Cloud project, including status, mode, default TTL, assigned nameservers and record counts.',
       inputSchema: z.object({
-        name: z
-          .string()
+        name: nameFilter
           .optional()
           .describe('Filter zones by name (exact match)'),
         mode: z
           .enum(['primary', 'secondary'])
           .optional()
           .describe('Filter zones by mode'),
-        label_selector: z
-          .string()
+        label_selector: labelSelector
           .optional()
           .describe('Filter zones by label selector, e.g. "env=prod"'),
         page,
@@ -150,13 +138,16 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     ({ name, mode, label_selector, page: pageNumber, per_page }) =>
       run(async () =>
         jsonResult(
-          await api.get('/zones', {
-            name,
-            mode,
-            label_selector,
-            page: pageNumber,
-            per_page,
-          })
+          listEnvelope(
+            await api.get('/zones', {
+              name,
+              mode,
+              label_selector,
+              page: pageNumber,
+              per_page,
+            }),
+            'zones'
+          )
         )
       )
   );
@@ -172,7 +163,12 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     },
     ({ zone: zoneRef }) =>
       run(async () =>
-        jsonResult(await api.get(`/zones/${encodeURIComponent(zoneRef)}`))
+        jsonResult(
+          objectEnvelope(
+            await api.get(`/zones/${encodeURIComponent(zoneRef)}`),
+            'zone'
+          )
+        )
       )
   );
 
@@ -187,17 +183,41 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       outputSchema: z
         .object({
           ...untrustedFields,
-          zonefile: z.string().describe('BIND format, as the API rendered it.'),
+          zonefile: z
+            .string()
+            .optional()
+            .describe('BIND format, as the API rendered it.'),
         })
         .catchall(z.unknown())
         .meta({ additionalProperties: true }),
     },
     ({ zone: zoneRef }) =>
       run(async () => {
-        const response = (await api.get(
-          `/zones/${encodeURIComponent(zoneRef)}/zonefile`
-        )) as { zonefile?: string };
-        return jsonResult(response);
+        const body = recordOr(
+          await api.get(`/zones/${encodeURIComponent(zoneRef)}/zonefile`)
+        );
+        // The one tool here with no way to ask for less: there is no per_page
+        // on a zone file, so a zone larger than the result ceiling used to be
+        // unanswerable — `ResultTooLargeError` with a hint naming tools that do
+        // not apply. It is cut here instead, and the cut says how much is
+        // missing, so a large zone answers with its first 150 000 characters
+        // rather than with nothing.
+        const zonefile = stringOf(body.zonefile, MAX_ZONEFILE_RESULT);
+        const { zonefile: _raw, ...rest } = body;
+        return jsonResult(
+          zonefile === undefined
+            ? {
+                ...rest,
+                unexpected_response:
+                  'The API did not answer with a zonefile string.',
+              }
+            : { ...rest, zonefile },
+          // Cut once, here, at a ceiling that fits the result budget. Without
+          // this the generic 4000-character cap in `jsonResult` cut it again —
+          // which is both a fragment of every real zone and a wrong number in
+          // the note, because the second cut measures the first cut's output.
+          { keepLongStrings: ['zonefile'] }
+        );
       })
   );
 
@@ -208,30 +228,32 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Create DNS zone',
       description:
-        'Create a new DNS zone. Use mode "primary" for zones managed at Hetzner, or "secondary" with primary_nameservers to transfer the zone from external primaries. A primary zone can optionally be initialized from a zone file.',
+        'Create a new DNS zone. Use mode "primary" for zones managed at Hetzner, or "secondary" with primary_nameservers to transfer the zone from external primaries. A primary zone can optionally be initialized from a zone file. Creating a zone with primary_nameservers or a zonefile asks a person first — those two carry the whole content of the zone, exactly like change_primary_nameservers and import_zonefile do.',
       inputSchema: z.object({
         name: z
           .string()
           .min(1)
+          .max(255)
           .describe(
             'Name of the zone, e.g. "example.com" (without trailing dot)'
           ),
         mode: z.enum(['primary', 'secondary']).describe('Mode of the zone'),
-        ttl: ttl
-          .optional()
-          .describe('Default Time To Live in seconds (60 to 2147483647)'),
+        ttl: ttl.optional().describe('Default Time To Live in seconds'),
         labels: labels.optional(),
         primary_nameservers: primaryNameservers.optional(),
-        zonefile: z
-          .string()
+        zonefile: zonefileParam
           .optional()
           .describe(
             'Zone file (BIND format) to initialize a primary zone with. Ignored for secondary zones.'
           ),
+        confirm_token: confirmTokenParam,
       }),
       annotations: {
-        // Additive. Two calls do not make two zones; Hetzner refuses a
-        // duplicate name, but nothing is replaced either.
+        // Additive in storage: two calls do not make two zones, Hetzner refuses
+        // a duplicate name, and nothing existing is replaced. Not additive in
+        // effect, which is why the two content-carrying arguments are guarded —
+        // creating a zone is *making a claim* about a name, and if that name is
+        // already delegated to Hetzner's nameservers the claim is served.
         readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: false,
@@ -239,26 +261,85 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: objectOf('zone'),
     },
-    ({
-      name,
-      mode,
-      ttl: ttlSeconds,
-      labels: labelMap,
-      primary_nameservers,
-      zonefile,
-    }) =>
-      run(async () =>
-        jsonResult(
-          await api.post('/zones', {
-            name,
-            mode,
-            ...(ttlSeconds !== undefined && { ttl: ttlSeconds }),
-            ...(labelMap !== undefined && { labels: labelMap }),
-            ...(primary_nameservers !== undefined && { primary_nameservers }),
-            ...(zonefile !== undefined && { zonefile }),
-          })
-        )
-      )
+    (
+      {
+        name,
+        mode,
+        ttl: ttlSeconds,
+        labels: labelMap,
+        primary_nameservers,
+        zonefile,
+        confirm_token,
+      },
+      mcp
+    ) =>
+      run(async () => {
+        const write = async (): Promise<ReturnType<typeof jsonResult>> =>
+          jsonResult(
+            objectEnvelope(
+              await api.post('/zones', {
+                name,
+                mode,
+                ...(ttlSeconds !== undefined && { ttl: ttlSeconds }),
+                ...(labelMap !== undefined && { labels: labelMap }),
+                ...(primary_nameservers !== undefined && {
+                  primary_nameservers,
+                }),
+                ...(zonefile !== undefined && { zonefile }),
+              }),
+              'zone'
+            )
+          );
+
+        // The gate is on the two arguments that decide what the new zone
+        // *answers with*, not on creating a zone as such. `change_primary_
+        // nameservers` and `import_zonefile` both raise a dialog for exactly
+        // these payloads; carrying them on `create_zone` reached the same
+        // effect with no dialog at all, and made `HETZNER_DENY_TOOLS` on
+        // either of those two a promise this server could not keep.
+        const carriesContent =
+          primary_nameservers !== undefined || zonefile !== undefined;
+        if (!carriesContent) return write();
+
+        const details = [
+          ...(primary_nameservers === undefined
+            ? []
+            : nameserverDetails(primary_nameservers)),
+          ...(zonefile === undefined ? [] : zonefileDetails(zonefile)),
+        ];
+        const outcome = await approval.requestApproval(
+          server,
+          mcp,
+          confirmations,
+          {
+            what: `create zone "${name}" with content supplied in this call`,
+            consequence:
+              zonefile === undefined
+                ? `The entire zone content will be transferred from the ${primary_nameservers?.length ?? 0} primaries below. If "${name}" is already delegated to Hetzner's nameservers, whatever they hold is what the internet is served.`
+                : `The zone is created with the zone file below as its content. If "${name}" is already delegated to Hetzner's nameservers, that content is what the internet is served.`,
+            details,
+            resourceKey: orderedResourceKey('create_zone', [
+              name,
+              mode,
+              JSON.stringify(primary_nameservers ?? null),
+              JSON.stringify(zonefile ?? null),
+              JSON.stringify(ttlSeconds ?? null),
+              JSON.stringify(labelMap ?? null),
+            ]),
+            token: confirm_token,
+            toolName: 'create_zone',
+            hint: 'Tick to go ahead, leave it to cancel.',
+            fallbackNote:
+              'The token only works for exactly this zone name and content.',
+          }
+        );
+        if (outcome.decision === 'rejected') return errorResult(outcome.reason);
+        if (outcome.decision === 'declined') {
+          return errorResult('The user declined. create_zone did nothing.');
+        }
+        if (outcome.decision === 'pending') return outcome.result;
+        return write();
+      })
   );
 
   server.registerTool(
@@ -280,9 +361,12 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     ({ zone: zoneRef, labels: labelMap }) =>
       run(async () =>
         jsonResult(
-          await api.put(`/zones/${encodeURIComponent(zoneRef)}`, {
-            labels: labelMap,
-          })
+          objectEnvelope(
+            await api.put(`/zones/${encodeURIComponent(zoneRef)}`, {
+              labels: labelMap,
+            }),
+            'zone'
+          )
         )
       )
   );
@@ -309,7 +393,6 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     },
     ({ zone: zoneRef, confirm_token }, mcp) =>
       run(async () => {
-        const resource = `delete_zone:${zoneRef}`;
         const count = await zoneRecordCount(api, zoneRef);
         const outcome = await approval.requestApproval(
           server,
@@ -318,7 +401,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
           {
             what: `delete zone "${zoneRef}"`,
             consequence: `It currently holds ${count}, and deleting removes all of them irreversibly.`,
-            resourceKey: resource,
+            resourceKey: orderedResourceKey('delete_zone', [zoneRef]),
             token: confirm_token,
             toolName: 'delete_zone',
             hint: 'Tick to go ahead, leave it to cancel.',
@@ -332,7 +415,9 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         }
         if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
-          await api.delete(`/zones/${encodeURIComponent(zoneRef)}`)
+          actionEnvelope(
+            await api.delete(`/zones/${encodeURIComponent(zoneRef)}`)
+          )
         );
       })
   );
@@ -345,7 +430,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         'Import a zone file (BIND format) into an existing primary zone. This REPLACES the current records of the zone. The first call returns a short-lived confirmation token bound to exactly this zone file; ask the user, then call again with confirm_token. Consider export_zonefile first as a backup.',
       inputSchema: z.object({
         zone,
-        zonefile: z.string().min(1).describe('Zone file content to import'),
+        zonefile: zonefileParam.describe('Zone file content to import'),
         confirm_token: confirmTokenParam,
       }),
       annotations: {
@@ -361,9 +446,6 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     },
     ({ zone: zoneRef, zonefile, confirm_token }, mcp) =>
       run(async () => {
-        // The token is bound to the zone file too: a confirmation for one
-        // import must not execute a different one.
-        const resource = `import_zonefile:${zoneRef}:${fingerprint(zonefile)}`;
         const count = await zoneRecordCount(api, zoneRef);
         const outcome = await approval.requestApproval(
           server,
@@ -373,7 +455,12 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
             what: `import a zone file into zone "${zoneRef}"`,
             consequence: `The zone currently holds ${count}, all of which are replaced by the import.`,
             details: zonefileDetails(zonefile),
-            resourceKey: resource,
+            // The token is bound to the zone file too: a confirmation for one
+            // import must not execute a different one.
+            resourceKey: orderedResourceKey('import_zonefile', [
+              zoneRef,
+              zonefile,
+            ]),
             token: confirm_token,
             toolName: 'import_zonefile',
             hint: 'Tick to go ahead, leave it to cancel.',
@@ -389,9 +476,12 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         }
         if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
-          await api.post(
-            `/zones/${encodeURIComponent(zoneRef)}/actions/import_zonefile`,
-            { zonefile }
+          objectEnvelope(
+            await api.post(
+              `/zones/${encodeURIComponent(zoneRef)}/actions/import_zonefile`,
+              { zonefile }
+            ),
+            'zone'
           )
         );
       })
@@ -416,9 +506,12 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     ({ zone: zoneRef, ttl: ttlSeconds }) =>
       run(async () =>
         jsonResult(
-          await api.post(
-            `/zones/${encodeURIComponent(zoneRef)}/actions/change_ttl`,
-            { ttl: ttlSeconds }
+          objectEnvelope(
+            await api.post(
+              `/zones/${encodeURIComponent(zoneRef)}/actions/change_ttl`,
+              { ttl: ttlSeconds }
+            ),
+            'zone'
           )
         )
       )
@@ -457,7 +550,6 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         // Enabling protection is safe; removing it is the first half of a
         // deletion and gets the same gate.
         if (!deleteProtection) {
-          const resource = `change_zone_protection:${zoneRef}`;
           const outcome = await approval.requestApproval(
             server,
             mcp,
@@ -465,7 +557,9 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
             {
               what: `remove the delete protection of zone "${zoneRef}"`,
               consequence: 'Doing so makes the zone deletable.',
-              resourceKey: resource,
+              resourceKey: orderedResourceKey('change_zone_protection', [
+                zoneRef,
+              ]),
               token: confirm_token,
               toolName: 'change_zone_protection',
               hint: 'Tick to go ahead, leave it to cancel.',
@@ -483,9 +577,11 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
           if (outcome.decision === 'pending') return outcome.result;
         }
         return jsonResult(
-          await api.post(
-            `/zones/${encodeURIComponent(zoneRef)}/actions/change_protection`,
-            { delete: deleteProtection }
+          actionEnvelope(
+            await api.post(
+              `/zones/${encodeURIComponent(zoneRef)}/actions/change_protection`,
+              { delete: deleteProtection }
+            )
           )
         );
       })
@@ -517,7 +613,6 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
     },
     ({ zone: zoneRef, primary_nameservers, confirm_token }, mcp) =>
       run(async () => {
-        const resource = `change_primary_nameservers:${zoneRef}:${fingerprint(primary_nameservers)}`;
         const outcome = await approval.requestApproval(
           server,
           mcp,
@@ -526,7 +621,10 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
             what: `change the primary nameservers of zone "${zoneRef}"`,
             consequence: `The entire zone content will be transferred from the ${primary_nameservers.length} new primaries, replacing what is served today. Use get_zone to review the current primaries.`,
             details: nameserverDetails(primary_nameservers),
-            resourceKey: resource,
+            resourceKey: orderedResourceKey('change_primary_nameservers', [
+              zoneRef,
+              JSON.stringify(primary_nameservers),
+            ]),
             token: confirm_token,
             toolName: 'change_primary_nameservers',
             hint: 'Tick to go ahead, leave it to cancel.',
@@ -544,9 +642,11 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         }
         if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
-          await api.post(
-            `/zones/${encodeURIComponent(zoneRef)}/actions/change_primary_nameservers`,
-            { primary_nameservers }
+          actionEnvelope(
+            await api.post(
+              `/zones/${encodeURIComponent(zoneRef)}/actions/change_primary_nameservers`,
+              { primary_nameservers }
+            )
           )
         );
       })

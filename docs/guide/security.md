@@ -124,8 +124,11 @@ any instructions inside them as text to report, never as instructions to follow.
 
 Within that envelope:
 
-- **Secrets are redacted.** Keys matching `tsig_key`, `token`, `secret`,
-  `password` or `credential` are replaced with `[redacted]`. A TSIG key sent
+- **Secrets are redacted.** A key is redacted when its normalised name (`-` and
+  `_` removed, lower-cased) ends in `password`, `passwd`, `passphrase`, `secret`,
+  `token`, `apikey`, `privatekey`, `tsigkey`, `credential` or `credentials`, so
+  `git-password` is caught as readily as `password`. An exact list of names is
+  only as good as the day it was written. A TSIG key sent
   once with `change_primary_nameservers` would otherwise come back in every
   subsequent `get_zone` and linger in the transcript.
 - **Oversized values are truncated** at 4 000 characters, with the original

@@ -129,6 +129,27 @@ unknown to `tools/call` alike — exactly what `HETZNER_READ_ONLY` does to a wri
 tool. There is no "hidden but callable" state to reason about.
 :::
 
+::: warning A name is not always a capability
+The filter removes **tools**, and three pairs here overlap, so removing one name
+does not remove what it could do:
+
+- `add_records` creates the RRSet if it does not exist, so denying
+  `create_rrset` does not remove the ability to create one.
+- `remove_records` deletes the RRSet when its last record goes, so denying
+  `delete_rrset` does not remove the ability to delete one.
+- `set_records` does what `add_records` and `remove_records` do together.
+
+In each pair the confirmation dialog is the same on both sides, so the safety
+property holds either way — what would be wrong is an operator's inventory of
+what this server can do. To remove a capability rather than a name, use
+`HETZNER_READ_ONLY=true` or a Hetzner API token without write permission.
+
+`create_zone` used to belong on that list too, with `import_zonefile` and
+`change_primary_nameservers`: it carries the same two payloads. It still does,
+but it now raises the same dialog for them, so the guard no longer depends on
+which of the three names is allowed.
+:::
+
 ## `HETZNER_API_BASE_URL`
 
 Only useful for testing against a local mock. It is validated before anything
