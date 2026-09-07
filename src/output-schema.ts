@@ -40,7 +40,16 @@ export const meta = z
   .optional()
   .describe('Hetzner’s pagination block: page, per_page, total_entries.');
 
-/** A list answer: the named array, plus `meta`. */
+/**
+ * A list answer: the named array, plus `meta`.
+ *
+ * The array stays required, and `src/boundary.ts` is what makes that safe — it
+ * answers with an empty array and an `unexpected_response` sentence when the
+ * API sent something else, rather than letting the key go missing. An empty
+ * list a model can read beats a required key it never gets: on SDK 2.0 the
+ * latter is `Output validation error for tool …` with no cause, for the whole
+ * call.
+ */
 export function listOf(key: string) {
   return z
     .object({
@@ -52,10 +61,17 @@ export function listOf(key: string) {
     .meta({ additionalProperties: true });
 }
 
-/** A single-object answer: the named record. */
+/**
+ * A single-object answer: the named record.
+ *
+ * Optional, unlike the array above, because there is no honest empty value for
+ * a zone or an RRSet — `{}` would claim the API answered with a record that has
+ * no fields. The boundary omits the key instead and says under
+ * `unexpected_response` what arrived in its place.
+ */
 export function objectOf(key: string) {
   return z
-    .object({ ...untrustedFields, [key]: document })
+    .object({ ...untrustedFields, [key]: document.optional() })
     .catchall(z.unknown())
     .meta({ additionalProperties: true });
 }

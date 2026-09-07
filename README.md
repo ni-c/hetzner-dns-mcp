@@ -269,18 +269,18 @@ document sliced mid-string does not parse.
 
 ### RRSets (record sets)
 
-| Tool                         | Description                                                           |
-| ---------------------------- | --------------------------------------------------------------------- |
-| `list_rrsets`                | List the RRSets of a zone, filterable by name/type/labels             |
-| `get_rrset`                  | Get a single RRSet by name and type                                   |
-| `create_rrset`               | Create a new RRSet with records                                       |
-| `update_rrset`               | Replace the labels of an RRSet                                        |
-| `delete_rrset` 👤            | Permanently delete an RRSet                                           |
-| `set_records` 👤             | Replace **all** records of an RRSet                                   |
-| `add_records`                | Add records to an RRSet (creates it if missing)                       |
-| `remove_records` 👤          | Remove specific records from an RRSet                                 |
-| `change_rrset_ttl`           | Change the TTL of an RRSet (or reset to the zone default with `null`) |
-| `change_rrset_protection` 👤 | Enable/disable change protection — asks when _disabling_              |
+| Tool                         | Description                                                                  |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `list_rrsets`                | List the RRSets of a zone, filterable by name/type/labels                    |
+| `get_rrset`                  | Get a single RRSet by name and type                                          |
+| `create_rrset` 👤            | Create a new RRSet with records — asks for authority records                 |
+| `update_rrset`               | Replace the labels of an RRSet                                               |
+| `delete_rrset` 👤            | Permanently delete an RRSet                                                  |
+| `set_records` 👤             | Replace **all** records of an RRSet                                          |
+| `add_records` 👤             | Add records to an RRSet (creates it if missing) — asks for authority records |
+| `remove_records` 👤          | Remove specific records from an RRSet                                        |
+| `change_rrset_ttl`           | Change the TTL of an RRSet (or reset to the zone default with `null`)        |
+| `change_rrset_protection` 👤 | Enable/disable change protection — asks when _disabling_                     |
 
 👤 asks a person through MCP elicitation · falls back to a two-call
 `confirm_token` where the client cannot show a dialog.
@@ -300,6 +300,15 @@ document sliced mid-string does not parse.
 `change_zone_protection`/`change_rrset_protection` when they _remove_ protection —
 raises a real dialog through MCP elicitation where the client supports it. The model
 cannot answer it on its behalf, and nothing happens until an answer comes back.
+
+Three more ask _conditionally_, because in DNS the dangerous act is making a claim
+rather than withdrawing one: `create_rrset` and `add_records` for a name or type
+that decides who answers (`NS`, `DS`, `MX`, `CNAME`, `CAA`, `TLSA`, `SVCB`,
+`HTTPS`, `SRV`, the apex `@`, a wildcard), and `create_zone` when the call carries
+`primary_nameservers` or a `zonefile` — the same payloads
+`change_primary_nameservers` and `import_zonefile` are guarded for. The
+confirmation binds every field the call will write, TTL and labels included, so a
+token issued for one TTL cannot redeem another.
 
 Where the client cannot show a dialog, the tool refuses its first call and returns a
 random, single-use token valid for five minutes; the second call must repeat the
@@ -365,9 +374,11 @@ request shapes are Hetzner's.
 
 - DNS records are edited by whoever holds the token, so upstream values,
   comments and zone files are marked as untrusted data — to be reported, never
-  followed. Keys matching `tsig_key`, `token` or `secret` are redacted, values
-  over 4 000 characters are truncated, and an HTML error page is dropped rather
-  than pasted into the context.
+  followed, in both channels and behind a fence the data cannot close. Keys are
+  redacted by the suffix of their normalised name (`password`, `secret`,
+  `token`, `apikey`, `privatekey`, `passphrase`, `tsigkey`), values over 4 000
+  characters are truncated, control characters are stripped, and an HTML error
+  page is dropped rather than pasted into the context.
 - Deleting a zone or replacing a record set asks a person: a real dialog through
   MCP elicitation, bound to the exact target. Where the client cannot show one,
   the call is refused and carries a random single-use token that only ever
@@ -378,7 +389,12 @@ request shapes are Hetzner's.
   so a path cannot escape, redirects are refused so the `Authorization` header
   never follows one, every request times out after 30 seconds, request bodies are
   assembled from named fields only, and the base URL is validated (HTTPS, no
-  credentials) before the token is ever sent to it.
+  credentials) before the token is ever sent to it. The token's own shape is
+  checked before it reaches the HTTP layer, which would otherwise quote it back
+  in an error; response bodies are read under a ceiling with the status decided
+  first; and every response is shape-checked rather than cast, so a proxy's
+  answer produces a readable result rather than a schema violation with no
+  cause.
 
 ## Documentation
 

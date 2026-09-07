@@ -7,16 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- #region changelog -->
 
-## [Unreleased]
+## [0.6.0] - 2026-09-07
 
-### Changed
+### Security
 
-- The tool reference marks the `essential` preset and the tools that ask a
-  person before they act, per tool rather than only in the introduction. A test
-  keeps both sets in step with the code.
-- `homepage` in `package.json` points at the documentation site rather than at
-  the README anchor on GitHub. It is what npm shows next to the package, and
-  every one of these servers has had a documentation site for weeks.
+- **The API token can no longer be quoted back by the HTTP layer.** A token with
+  a line break in it — a paste wrapped by a terminal — reached undici, whose
+  refusal is `Headers.append: "Bearer <the whole token>" is an invalid header
+value.`, and the generic error path answered the tool call with it. Verified on
+  Node 24.5.0. The shape is now checked at startup (trimmed first, so
+  `$(cat token)` still works) and again before every request; neither message
+  quotes the value, and the startup one names the length and the position of the
+  offending character instead.
+- **Every response is shape-checked at the boundary instead of being cast.** The
+  output schemas required the keys the API promises (`zones`, `zone`, `rrset`,
+  `zonefile`), and anything that is not the API — a reverse proxy, a WAF, a 204,
+  a base URL one character off, a body that is not JSON — made the server fail
+  its own schema. On SDK 2.0 that answers `isError: true` with
+  `Output validation error for tool …`: no cause, no partial answer, the whole
+  call. A new `src/boundary.ts` decides per field what an unusable value means,
+  drops list entries that are not objects and says how many, and explains a thin
+  answer under `unexpected_response`.
+- **A confirmation now binds every field its call will write.** `create_rrset`
+  and `add_records` raise the dialog on the record list and also write `ttl`
+  (and, for `create_rrset`, `labels`), so a token issued for one TTL executed
+  with any other — and a week-long TTL on a record somebody else added is how
+  long the correction takes to reach the caches. Both are in the key and in the
+  dialog now.
+- **`create_zone` asks when it carries content.** It accepts
+  `primary_nameservers` and a `zonefile` — the same two payloads
+  `change_primary_nameservers` and `import_zonefile` raise a dialog for — and
+  applied them on the first call, so `HETZNER_DENY_TOOLS` on either of those two
+  removed a name rather than the capability. Creating an empty zone is still
+  additive and still asks nobody.
+- **A primary nameserver has to be an address.** `address` was free text while
+  the schema said "IPv4 or IPv6"; it is checked with `net.isIP` before the
+  dialog is raised.
+- **The status is decided before the body, and both are read under a ceiling.**
+  A reverse proxy answering `401` with a large login page used to surface as a
+  size complaint — no status, so no credential hint, and a model retries what it
+  was never told had failed on the credential. Success bodies are capped at
+  16 MiB and refused above it, error bodies at 64 KiB and cut.
+- **The fence cannot be closed by what it fences.** `JSON.stringify` leaves `<`,
+  `>` and `/` alone, so a TXT record whose value was `</untrusted-data>` ended
+  the fence early and everything after it read as this server's own words.
+- **The generic error path no longer speaks in somebody else's words.** undici
+  quotes the header value it refused and Node's TLS layer quotes the subject
+  alternative names of whatever answered on the port; both used to reach the
+  model as this server's message. Every such message is now stripped of control
+  characters, made well-formed and cut.
+- **Credential keys are matched by suffix rather than by an exact list.** A key
+  is redacted when its normalised name ends in `password`, `passwd`,
+  `passphrase`, `secret`, `token`, `apikey`, `privatekey`, `tsigkey`,
+  `credential` or `credentials`, so `git-password` is caught as readily as
+  `password`. In the DNS part of the API `tsig_key` is still the only such
+  field; the rule is for the one that gets added later.
+- **A `__proto__` key survives the result walk.** `JSON.parse` produces it as an
+  ordinary own property and a label key is caller-chosen; rebuilding objects with
+  `out[name] = …` ran the prototype setter instead, so the field vanished from
+  the answer and the copy's prototype was replaced, with no error anywhere.
+- **`ELICITATION` is no longer echoed raw.** It is unprefixed and sits one line
+  from `HETZNER_API_TOKEN` in every compose file, and a value pasted into the
+  wrong line is exactly what fails that parse. Only a short word is quoted now;
+  anything else is described by its length.
+- **`HETZNER_API_BASE_URL` is parsed rather than pasted.** A query string or
+  fragment used to be kept and glued in front of every path; only the origin and
+  path are used now, and what was dropped is named. The trailing-slash strip is
+  an index walk instead of `/\/+$/`, which was quadratic — 1626 ms at 80 000
+  slashes with a character behind them, measured.
+- **mcp-approval 0.8.2.** A sealed dialog answer is single-use since 0.8.1: the same `requestState` presented again within its lifetime used to be accepted again, and with a resource key that is the same every time — a whole stream, a fixed set of targets — every replay landed. npm users on `^0.8.0` already had the fix; the Docker image is built from the lockfile and carried 0.8.0 until this release.
+- Every resource key is built with `orderedResourceKey` from mcp-approval, so
+  position is part of the key by construction rather than by the character set
+  the parts happen to use.
+- `actions/dependency-review-action` on pull requests. `npm audit` checks the
+  tree as it is; this checks the change.
+- The publish job installs with `--ignore-scripts`. It holds `id-token: write`
+  for npm Trusted Publishing, so a dependency's install hook would have run with
+  the OIDC token available; nothing in the tree needs one. `gh release create`
+  gained `--verify-tag`.
+- yarn is removed from the runtime image beside npm and corepack. It lives in
+  `/opt`, so the line that named `node_modules` and `/usr/local/bin` missed it.
 
 ### Added
 
@@ -29,9 +99,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after the fact — this is the channel a model sees before it calls anything.
 - An OpenSSF Scorecard run, weekly and on every push to `main`, reporting into
   the Security tab next to CodeQL and Trivy. The badge is the second in the row.
+- Bounds on every caller-supplied value, taken from the API's own specification
+  where it states one: 255 characters for a zone name, 50 records per record
+  action, 63 for a label value, and so on.
+- `test/harness.ts`, a shared client whose `connect` lists the tools once. A
+  client only validates `structuredContent` against a schema it has loaded, so
+  before this no success path in any suite had ever run that check. Its absence
+  was the reason the tool reference could not be checked against the code
+  either; that test is back, and it found three tools that ask a person and were
+  not marked.
+- `test/shape.test.ts`, `test/hardening.test.ts` and `test/linear-time.test.ts`:
+  a property test that feeds generated bodies to every read tool through a
+  connected client, the credential and untrusted-content assertions, and a
+  timing table that holds every pattern at its ceiling.
 
 ### Changed
 
+- The tool reference marks the `essential` preset and the tools that ask a
+  person before they act, per tool rather than only in the introduction. A test
+  keeps both sets in step with the code.
+- `homepage` in `package.json` points at the documentation site rather than at
+  the README anchor on GitHub. It is what npm shows next to the package, and
+  every one of these servers has had a documentation site for weeks.
 - Source maps are no longer published in the npm tarball. Node reads them only
   under `--enable-source-maps`, which nothing here sets, and the maps pointed at
   a `src/` this package does not ship — so a stack trace under that flag named a
@@ -42,8 +131,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worked, at the cost of the largest map payload in the family. Now that the
   maps do not ship at all it has nothing left to do, and one family should not
   carry two answers to one question.
+- `export_zonefile` hands over the zone file itself, cut once at 150 000
+  characters with the document's real length named. The general 4000-character
+  per-value cap is right for a record value inside a listing and wrong for the
+  field that _is_ the answer — about a hundred records — so the tool had been
+  answering with a fragment of every real zone, and a second cut then reported
+  the length of the first cut rather than of the document.
+- `hintFor` explains `409`, `429`, `502`, `503` and `504`. A rate limit and a
+  zone with an action already running both used to read as an unexplained
+  failure, and the one thing a model reliably does with one of those is try
+  again.
+- SECURITY.md, the README and the guides say which tools ask and when, what the
+  tool filter can and cannot promise, and that adding an `A` record does not
+  raise a dialog — a real gap, left open deliberately, named rather than left to
+  be discovered.
+- `target` is ES2024, for `String#toWellFormed` on every string that leaves.
 
-[Unreleased]: https://github.com/ni-c/hetzner-dns-mcp/compare/v0.5.0...HEAD
+### Removed
+
+- `src/resource-key.ts` and the unused `textResult` helper. The fingerprint it
+  provided is `orderedResourceKey`'s job now, and the fleet standardises on the
+  library rather than the library on the server.
 
 ## [0.5.0] - 2026-09-03
 

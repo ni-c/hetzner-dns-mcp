@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server';
+import { orderedResourceKey } from 'mcp-approval';
 import { z } from 'zod';
 import {
   actionResult,
@@ -9,8 +10,11 @@ import {
 } from '../output-schema.js';
 import {
   RRSET_TYPES,
+  actionRecords,
   confirmTokenParam,
+  labelSelector,
   labels,
+  nameFilter,
   page,
   perPage,
   records,
@@ -24,7 +28,13 @@ import {
 import type { HetznerApi } from '../api.js';
 import { READ_ONLY } from './annotations.js';
 
-import { fingerprint } from '../resource-key.js';
+import {
+  actionEnvelope,
+  listEnvelope,
+  objectEnvelope,
+  recordOr,
+  safeIntegerOf,
+} from '../boundary.js';
 import { errorResult, jsonResult, run } from '../result.js';
 import type { ToolContext } from './context.js';
 
@@ -47,12 +57,23 @@ import type { ToolContext } from './context.js';
  * `@` is here because the apex is where SPF, DMARC and the zone's own NS set
  * live, and `*` because a wildcard answers every name that does not exist yet.
  *
- * Deliberately **not** here: `_acme-challenge` TXT. Adding one is how DNS-01
- * renewal works, its whole purpose is to run unattended, and a dialog on every
- * certificate renewal is a cost with no matching benefit — the confirmation
- * cannot tell a real ACME client from a forged token, and both look identical.
- * What does defend that name is CAA (now gated) plus Certificate Transparency
- * monitoring, and SECURITY.md says so.
+ * Deliberately **not** here, and both are judgement calls this file owes the
+ * reader rather than defaults it fell into:
+ *
+ * - `_acme-challenge` TXT. Adding one is how DNS-01 renewal works, its whole
+ *   purpose is to run unattended, and a dialog on every certificate renewal is
+ *   a cost with no matching benefit — the confirmation cannot tell a real ACME
+ *   client from a forged token, and both look identical. What does defend that
+ *   name is CAA (now gated) plus Certificate Transparency monitoring, and
+ *   SECURITY.md says so.
+ * - `A` and `AAAA`. `add_records` on an existing `www/A` puts a second address
+ *   beside the real one, and a resolver hands out both — so an added address
+ *   takes a share of the traffic without anything being removed. That is a real
+ *   gap and it is left open on purpose: an address record is the single most
+ *   common thing anybody does here, a dialog in front of every one of them is
+ *   how people learn to tick without reading, and the destructive direction
+ *   (`set_records`, `remove_records`, `delete_rrset`) is guarded regardless of
+ *   type. SECURITY.md names this gap rather than leaving it to be discovered.
  */
 const AUTHORITY_TYPES = new Set([
   'NS',
@@ -81,9 +102,18 @@ export function shiftsAuthority(name: string, type: string): boolean {
  * of www/A" is true either way. `renderDetails` collapses whitespace and caps
  * each value, and prints them under "supplied by the caller, not by this
  * server".
+ *
+ * `ttl` and `labels` are here for the same reason and were not: the handler
+ * writes them, so a token issued for one TTL used to execute with another —
+ * and a TTL of a week on a record somebody else added is how long the fix
+ * takes to reach the caches.
  */
 function recordDetails(
-  values: readonly { value: string }[]
+  values: readonly { value: string }[],
+  extra: {
+    ttl?: number | undefined;
+    labels?: Record<string, string> | undefined;
+  } = {}
 ): { label: string; value: string }[] {
   const shown = values.slice(0, 5);
   const details = shown.map((record, index) => ({
@@ -94,6 +124,17 @@ function recordDetails(
     details.push({
       label: 'and',
       value: `${values.length - shown.length} more not shown`,
+    });
+  }
+  if (extra.ttl !== undefined) {
+    details.push({ label: 'ttl', value: `${extra.ttl} seconds` });
+  }
+  if (extra.labels !== undefined) {
+    details.push({
+      label: 'labels',
+      value: Object.entries(extra.labels)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(', '),
     });
   }
   return details;
@@ -107,20 +148,21 @@ function recordDetails(
  */
 async function rrsetSummary(
   api: HetznerApi,
-  zone: string,
+  zoneRef: string,
   name: string,
   type: string
 ): Promise<string> {
   try {
-    const response = (await api.get(
-      `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}`
-    )) as { rrset?: { records?: unknown[]; ttl?: number | null } };
-    const count = response.rrset?.records?.length;
-    if (typeof count !== 'number')
+    const body = await api.get(
+      `/zones/${encodeURIComponent(zoneRef)}/rrsets${rrsetPath(name, type)}`
+    );
+    const rrset = recordOr(recordOr(body).rrset);
+    const list = rrset.records;
+    if (!Array.isArray(list))
       return 'currently holds an unknown number of records';
-    const ttl = response.rrset?.ttl;
-    const ttlText = typeof ttl === 'number' ? `, TTL ${ttl}` : '';
-    return `currently holds ${count} record(s)${ttlText}`;
+    const responseTtl = safeIntegerOf(rrset.ttl);
+    const ttlText = responseTtl === undefined ? '' : `, TTL ${responseTtl}`;
+    return `currently holds ${list.length} record(s)${ttlText}`;
   } catch {
     return 'currently holds an unknown number of records';
   }
@@ -137,18 +179,17 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         'List the RRSets (DNS record sets) of a zone, including their records, TTLs and protection status.',
       inputSchema: z.object({
         zone,
-        name: z
-          .string()
+        name: nameFilter
           .optional()
           .describe(
             'Filter RRSets by name, e.g. "www" or "@" for the zone apex'
           ),
         type: z
           .array(z.enum(RRSET_TYPES))
+          .max(RRSET_TYPES.length)
           .optional()
           .describe('Filter RRSets by type(s), e.g. ["A", "AAAA"]'),
-        label_selector: z
-          .string()
+        label_selector: labelSelector
           .optional()
           .describe('Filter RRSets by label selector'),
         page,
@@ -157,16 +198,26 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       annotations: READ_ONLY,
       outputSchema: listOf('rrsets'),
     },
-    ({ zone, name, type, label_selector, page, per_page }) =>
+    ({
+      zone: zoneRef,
+      name,
+      type,
+      label_selector,
+      page: pageNumber,
+      per_page,
+    }) =>
       run(async () =>
         jsonResult(
-          await api.get(`/zones/${encodeURIComponent(zone)}/rrsets`, {
-            name,
-            type,
-            label_selector,
-            page,
-            per_page,
-          })
+          listEnvelope(
+            await api.get(`/zones/${encodeURIComponent(zoneRef)}/rrsets`, {
+              name,
+              type,
+              label_selector,
+              page: pageNumber,
+              per_page,
+            }),
+            'rrsets'
+          )
         )
       )
   );
@@ -181,11 +232,14 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       annotations: READ_ONLY,
       outputSchema: objectOf('rrset'),
     },
-    ({ zone, name, type }) =>
+    ({ zone: zoneRef, name, type }) =>
       run(async () =>
         jsonResult(
-          await api.get(
-            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}`
+          objectEnvelope(
+            await api.get(
+              `/zones/${encodeURIComponent(zoneRef)}/rrsets${rrsetPath(name, type)}`
+            ),
+            'rrset'
           )
         )
       )
@@ -224,17 +278,31 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: objectOf('rrset'),
     },
-    ({ zone, name, type, records, ttl, labels, confirm_token }, mcp) =>
+    (
+      {
+        zone: zoneRef,
+        name,
+        type,
+        records: recordList,
+        ttl: ttlSeconds,
+        labels: labelMap,
+        confirm_token,
+      },
+      mcp
+    ) =>
       run(async () => {
         const write = async (): Promise<ReturnType<typeof jsonResult>> =>
           jsonResult(
-            await api.post(`/zones/${encodeURIComponent(zone)}/rrsets`, {
-              name,
-              type,
-              records,
-              ...(ttl !== undefined && { ttl }),
-              ...(labels !== undefined && { labels }),
-            })
+            objectEnvelope(
+              await api.post(`/zones/${encodeURIComponent(zoneRef)}/rrsets`, {
+                name,
+                type,
+                records: recordList,
+                ...(ttlSeconds !== undefined && { ttl: ttlSeconds }),
+                ...(labelMap !== undefined && { labels: labelMap }),
+              }),
+              'rrset'
+            )
           );
         if (!shiftsAuthority(name, type)) return write();
 
@@ -243,18 +311,31 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
           mcp,
           confirmations,
           {
-            what: `create the RRSet "${name}/${type}" in zone "${zone}"`,
+            what: `create the RRSet "${name}/${type}" in zone "${zoneRef}"`,
             consequence:
               `A ${type} record decides who answers for a name rather than ` +
               'adding an answer to it, and nothing existing has to be removed ' +
               'for it to take effect. Check the values below against what you ' +
               'meant.',
-            details: recordDetails(records),
-            resourceKey: `create_rrset:${zone}${rrsetPath(name, type)}:${fingerprint(records)}`,
+            details: recordDetails(recordList, {
+              ttl: ttlSeconds,
+              labels: labelMap,
+            }),
+            // Every field the handler writes, in the key. The record list alone
+            // left `ttl` and `labels` free: a token issued for one TTL executed
+            // with any other.
+            resourceKey: orderedResourceKey('create_rrset', [
+              zoneRef,
+              rrsetPath(name, type),
+              JSON.stringify(recordList),
+              JSON.stringify(ttlSeconds ?? null),
+              JSON.stringify(labelMap ?? null),
+            ]),
             token: confirm_token,
             toolName: 'create_rrset',
             hint: 'Tick to go ahead, leave it to cancel.',
-            fallbackNote: 'The token only works for exactly this record list.',
+            fallbackNote:
+              'The token only works for exactly this record list, TTL and label set.',
           }
         );
         if (outcome.decision === 'rejected') return errorResult(outcome.reason);
@@ -288,12 +369,14 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: actionResult,
     },
-    ({ zone, name, type, labels }) =>
+    ({ zone: zoneRef, name, type, labels: labelMap }) =>
       run(async () =>
         jsonResult(
-          await api.put(
-            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}`,
-            { labels }
+          actionEnvelope(
+            await api.put(
+              `/zones/${encodeURIComponent(zoneRef)}/rrsets${rrsetPath(name, type)}`,
+              { labels: labelMap }
+            )
           )
         )
       )
@@ -324,18 +407,20 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         .catchall(z.unknown())
         .meta({ additionalProperties: true }),
     },
-    ({ zone, name, type, confirm_token }, mcp) =>
+    ({ zone: zoneRef, name, type, confirm_token }, mcp) =>
       run(async () => {
-        const resource = `delete_rrset:${zone}${rrsetPath(name, type)}`;
-        const summary = await rrsetSummary(api, zone, name, type);
+        const summary = await rrsetSummary(api, zoneRef, name, type);
         const outcome = await approval.requestApproval(
           server,
           mcp,
           confirmations,
           {
-            what: `delete RRSet "${name}/${type}" of zone "${zone}"`,
+            what: `delete RRSet "${name}/${type}" of zone "${zoneRef}"`,
             consequence: `It ${summary}, and deleting is irreversible. Use get_rrset to review the contents.`,
-            resourceKey: resource,
+            resourceKey: orderedResourceKey('delete_rrset', [
+              zoneRef,
+              rrsetPath(name, type),
+            ]),
             token: confirm_token,
             toolName: 'delete_rrset',
             hint: 'Tick to go ahead, leave it to cancel.',
@@ -349,8 +434,10 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         }
         if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
-          await api.delete(
-            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}`
+          actionEnvelope(
+            await api.delete(
+              `/zones/${encodeURIComponent(zoneRef)}/rrsets${rrsetPath(name, type)}`
+            )
           )
         );
       })
@@ -366,7 +453,7 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         zone,
         name: rrsetName,
         type: rrsetType,
-        records,
+        records: actionRecords,
         confirm_token: confirmTokenParam,
       }),
       annotations: {
@@ -378,21 +465,24 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: actionResult,
     },
-    ({ zone, name, type, records, confirm_token }, mcp) =>
+    ({ zone: zoneRef, name, type, records: recordList, confirm_token }, mcp) =>
       run(async () => {
-        // Binding the token to the record list stops a confirmation obtained
-        // for one set of values from writing a different one.
-        const resource = `set_records:${zone}${rrsetPath(name, type)}:${fingerprint(records)}`;
-        const summary = await rrsetSummary(api, zone, name, type);
+        const summary = await rrsetSummary(api, zoneRef, name, type);
         const outcome = await approval.requestApproval(
           server,
           mcp,
           confirmations,
           {
-            what: `replace the records of RRSet "${name}/${type}" of zone "${zone}"`,
-            consequence: `It ${summary}; all of them are replaced by the ${records.length} record(s) in this call. Use get_rrset to review the contents.`,
-            details: recordDetails(records),
-            resourceKey: resource,
+            what: `replace the records of RRSet "${name}/${type}" of zone "${zoneRef}"`,
+            consequence: `It ${summary}; all of them are replaced by the ${recordList.length} record(s) in this call. Use get_rrset to review the contents.`,
+            details: recordDetails(recordList),
+            // Binding the token to the record list stops a confirmation obtained
+            // for one set of values from writing a different one.
+            resourceKey: orderedResourceKey('set_records', [
+              zoneRef,
+              rrsetPath(name, type),
+              JSON.stringify(recordList),
+            ]),
             token: confirm_token,
             toolName: 'set_records',
             hint: 'Tick to go ahead, leave it to cancel.',
@@ -407,9 +497,11 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         }
         if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
-          await api.post(
-            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/set_records`,
-            { records }
+          actionEnvelope(
+            await api.post(
+              `/zones/${encodeURIComponent(zoneRef)}/rrsets${rrsetPath(name, type)}/actions/set_records`,
+              { records: recordList }
+            )
           )
         );
       })
@@ -420,12 +512,12 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Add records to an RRSet',
       description:
-        'Add records to an RRSet. Existing records are kept. Creates the RRSet if it does not exist yet.',
+        'Add records to an RRSet. Existing records are kept. Creates the RRSet if it does not exist yet — so denying create_rrset does not remove the ability to create one.',
       inputSchema: z.object({
         zone,
         name: rrsetName,
         type: rrsetType,
-        records,
+        records: actionRecords,
         ttl: ttl
           .optional()
           .describe(
@@ -445,35 +537,59 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: actionResult,
     },
-    ({ zone, name, type, records, ttl, confirm_token }, mcp) =>
+    (
+      {
+        zone: zoneRef,
+        name,
+        type,
+        records: recordList,
+        ttl: ttlSeconds,
+        confirm_token,
+      },
+      mcp
+    ) =>
       run(async () => {
         const write = async (): Promise<ReturnType<typeof jsonResult>> =>
           jsonResult(
-            await api.post(
-              `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/add_records`,
-              { records, ...(ttl !== undefined && { ttl }) }
+            actionEnvelope(
+              await api.post(
+                `/zones/${encodeURIComponent(zoneRef)}/rrsets${rrsetPath(name, type)}/actions/add_records`,
+                {
+                  records: recordList,
+                  ...(ttlSeconds !== undefined && { ttl: ttlSeconds }),
+                }
+              )
             )
           );
         if (!shiftsAuthority(name, type)) return write();
 
-        const summary = await rrsetSummary(api, zone, name, type);
+        const summary = await rrsetSummary(api, zoneRef, name, type);
         const outcome = await approval.requestApproval(
           server,
           mcp,
           confirmations,
           {
-            what: `add ${records.length} record(s) to "${name}/${type}" of zone "${zone}"`,
+            what: `add ${recordList.length} record(s) to "${name}/${type}" of zone "${zoneRef}"`,
             consequence:
               `It ${summary}, and those stay. A ${type} record decides who ` +
               'answers for a name, so an added one can take effect without ' +
               'anything being removed — at preference or priority order, the ' +
               'new value can simply win. Check the values below.',
-            details: recordDetails(records),
-            resourceKey: `add_records:${zone}${rrsetPath(name, type)}:${fingerprint(records)}`,
+            details: recordDetails(recordList, { ttl: ttlSeconds }),
+            // `ttl` is in the key as well as in the sentence: this call writes
+            // it, and a week-long TTL on a record somebody else added is how
+            // long the correction takes to reach the caches.
+            resourceKey: orderedResourceKey('add_records', [
+              zoneRef,
+              rrsetPath(name, type),
+              JSON.stringify(recordList),
+              JSON.stringify(ttlSeconds ?? null),
+            ]),
             token: confirm_token,
             toolName: 'add_records',
             hint: 'Tick to go ahead, leave it to cancel.',
-            fallbackNote: 'The token only works for exactly this record list.',
+            fallbackNote:
+              'The token only works for exactly this record list and TTL.',
           }
         );
         if (outcome.decision === 'rejected') return errorResult(outcome.reason);
@@ -490,12 +606,12 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
     {
       title: 'Remove records from an RRSet',
       description:
-        'Remove specific records (matched by value) from an RRSet. Removing the last record deletes the RRSet. The first call returns a short-lived confirmation token bound to exactly this record list.',
+        'Remove specific records (matched by value) from an RRSet. Removing the last record deletes the RRSet — so denying delete_rrset does not remove the ability to delete one. The first call returns a short-lived confirmation token bound to exactly this record list.',
       inputSchema: z.object({
         zone,
         name: rrsetName,
         type: rrsetType,
-        records,
+        records: actionRecords,
         confirm_token: confirmTokenParam,
       }),
       annotations: {
@@ -508,19 +624,22 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: actionResult,
     },
-    ({ zone, name, type, records, confirm_token }, mcp) =>
+    ({ zone: zoneRef, name, type, records: recordList, confirm_token }, mcp) =>
       run(async () => {
-        const resource = `remove_records:${zone}${rrsetPath(name, type)}:${fingerprint(records)}`;
-        const summary = await rrsetSummary(api, zone, name, type);
+        const summary = await rrsetSummary(api, zoneRef, name, type);
         const outcome = await approval.requestApproval(
           server,
           mcp,
           confirmations,
           {
-            what: `remove records from RRSet "${name}/${type}" of zone "${zone}"`,
-            consequence: `It ${summary}; this call removes ${records.length} of them, and removing the last record deletes the RRSet. Use get_rrset to review the contents.`,
-            details: recordDetails(records),
-            resourceKey: resource,
+            what: `remove records from RRSet "${name}/${type}" of zone "${zoneRef}"`,
+            consequence: `It ${summary}; this call removes ${recordList.length} of them, and removing the last record deletes the RRSet. Use get_rrset to review the contents.`,
+            details: recordDetails(recordList),
+            resourceKey: orderedResourceKey('remove_records', [
+              zoneRef,
+              rrsetPath(name, type),
+              JSON.stringify(recordList),
+            ]),
             token: confirm_token,
             toolName: 'remove_records',
             hint: 'Tick to go ahead, leave it to cancel.',
@@ -535,9 +654,11 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         }
         if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
-          await api.post(
-            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/remove_records`,
-            { records }
+          actionEnvelope(
+            await api.post(
+              `/zones/${encodeURIComponent(zoneRef)}/rrsets${rrsetPath(name, type)}/actions/remove_records`,
+              { records: recordList }
+            )
           )
         );
       })
@@ -568,12 +689,14 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: actionResult,
     },
-    ({ zone, name, type, ttl }) =>
+    ({ zone: zoneRef, name, type, ttl: ttlSeconds }) =>
       run(async () =>
         jsonResult(
-          await api.post(
-            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/change_ttl`,
-            { ttl }
+          actionEnvelope(
+            await api.post(
+              `/zones/${encodeURIComponent(zoneRef)}/rrsets${rrsetPath(name, type)}/actions/change_ttl`,
+              { ttl: ttlSeconds }
+            )
           )
         )
       )
@@ -609,19 +732,21 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
         .catchall(z.unknown())
         .meta({ additionalProperties: true }),
     },
-    ({ zone, name, type, change, confirm_token }, mcp) =>
+    ({ zone: zoneRef, name, type, change, confirm_token }, mcp) =>
       run(async () => {
         if (!change) {
-          const resource = `change_rrset_protection:${zone}${rrsetPath(name, type)}`;
           const outcome = await approval.requestApproval(
             server,
             mcp,
             confirmations,
             {
-              what: `remove the change protection of RRSet "${name}/${type}" of zone "${zone}"`,
+              what: `remove the change protection of RRSet "${name}/${type}" of zone "${zoneRef}"`,
               consequence:
                 'Doing so makes the RRSet editable and deletable again.',
-              resourceKey: resource,
+              resourceKey: orderedResourceKey('change_rrset_protection', [
+                zoneRef,
+                rrsetPath(name, type),
+              ]),
               token: confirm_token,
               toolName: 'change_rrset_protection',
               hint: 'Tick to go ahead, leave it to cancel.',
@@ -639,9 +764,11 @@ export function registerRrsetTools(server: McpServer, ctx: ToolContext): void {
           if (outcome.decision === 'pending') return outcome.result;
         }
         return jsonResult(
-          await api.post(
-            `/zones/${encodeURIComponent(zone)}/rrsets${rrsetPath(name, type)}/actions/change_protection`,
-            { change }
+          actionEnvelope(
+            await api.post(
+              `/zones/${encodeURIComponent(zoneRef)}/rrsets${rrsetPath(name, type)}/actions/change_protection`,
+              { change }
+            )
           )
         );
       })
