@@ -147,14 +147,14 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       annotations: READ_ONLY,
       outputSchema: listOf('zones'),
     },
-    ({ name, mode, label_selector, page, per_page }) =>
+    ({ name, mode, label_selector, page: pageNumber, per_page }) =>
       run(async () =>
         jsonResult(
           await api.get('/zones', {
             name,
             mode,
             label_selector,
-            page,
+            page: pageNumber,
             per_page,
           })
         )
@@ -170,9 +170,9 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       annotations: READ_ONLY,
       outputSchema: objectOf('zone'),
     },
-    ({ zone }) =>
+    ({ zone: zoneRef }) =>
       run(async () =>
-        jsonResult(await api.get(`/zones/${encodeURIComponent(zone)}`))
+        jsonResult(await api.get(`/zones/${encodeURIComponent(zoneRef)}`))
       )
   );
 
@@ -192,10 +192,10 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         .catchall(z.unknown())
         .meta({ additionalProperties: true }),
     },
-    ({ zone }) =>
+    ({ zone: zoneRef }) =>
       run(async () => {
         const response = (await api.get(
-          `/zones/${encodeURIComponent(zone)}/zonefile`
+          `/zones/${encodeURIComponent(zoneRef)}/zonefile`
         )) as { zonefile?: string };
         return jsonResult(response);
       })
@@ -239,14 +239,21 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: objectOf('zone'),
     },
-    ({ name, mode, ttl, labels, primary_nameservers, zonefile }) =>
+    ({
+      name,
+      mode,
+      ttl: ttlSeconds,
+      labels: labelMap,
+      primary_nameservers,
+      zonefile,
+    }) =>
       run(async () =>
         jsonResult(
           await api.post('/zones', {
             name,
             mode,
-            ...(ttl !== undefined && { ttl }),
-            ...(labels !== undefined && { labels }),
+            ...(ttlSeconds !== undefined && { ttl: ttlSeconds }),
+            ...(labelMap !== undefined && { labels: labelMap }),
             ...(primary_nameservers !== undefined && { primary_nameservers }),
             ...(zonefile !== undefined && { zonefile }),
           })
@@ -270,10 +277,12 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: objectOf('zone'),
     },
-    ({ zone, labels }) =>
+    ({ zone: zoneRef, labels: labelMap }) =>
       run(async () =>
         jsonResult(
-          await api.put(`/zones/${encodeURIComponent(zone)}`, { labels })
+          await api.put(`/zones/${encodeURIComponent(zoneRef)}`, {
+            labels: labelMap,
+          })
         )
       )
   );
@@ -298,16 +307,16 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         .catchall(z.unknown())
         .meta({ additionalProperties: true }),
     },
-    ({ zone, confirm_token }, mcp) =>
+    ({ zone: zoneRef, confirm_token }, mcp) =>
       run(async () => {
-        const resource = `delete_zone:${zone}`;
-        const count = await zoneRecordCount(api, zone);
+        const resource = `delete_zone:${zoneRef}`;
+        const count = await zoneRecordCount(api, zoneRef);
         const outcome = await approval.requestApproval(
           server,
           mcp,
           confirmations,
           {
-            what: `delete zone "${zone}"`,
+            what: `delete zone "${zoneRef}"`,
             consequence: `It currently holds ${count}, and deleting removes all of them irreversibly.`,
             resourceKey: resource,
             token: confirm_token,
@@ -323,7 +332,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         }
         if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
-          await api.delete(`/zones/${encodeURIComponent(zone)}`)
+          await api.delete(`/zones/${encodeURIComponent(zoneRef)}`)
         );
       })
   );
@@ -350,18 +359,18 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: objectOf('zone'),
     },
-    ({ zone, zonefile, confirm_token }, mcp) =>
+    ({ zone: zoneRef, zonefile, confirm_token }, mcp) =>
       run(async () => {
         // The token is bound to the zone file too: a confirmation for one
         // import must not execute a different one.
-        const resource = `import_zonefile:${zone}:${fingerprint(zonefile)}`;
-        const count = await zoneRecordCount(api, zone);
+        const resource = `import_zonefile:${zoneRef}:${fingerprint(zonefile)}`;
+        const count = await zoneRecordCount(api, zoneRef);
         const outcome = await approval.requestApproval(
           server,
           mcp,
           confirmations,
           {
-            what: `import a zone file into zone "${zone}"`,
+            what: `import a zone file into zone "${zoneRef}"`,
             consequence: `The zone currently holds ${count}, all of which are replaced by the import.`,
             details: zonefileDetails(zonefile),
             resourceKey: resource,
@@ -381,7 +390,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
           await api.post(
-            `/zones/${encodeURIComponent(zone)}/actions/import_zonefile`,
+            `/zones/${encodeURIComponent(zoneRef)}/actions/import_zonefile`,
             { zonefile }
           )
         );
@@ -404,12 +413,12 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
       },
       outputSchema: objectOf('zone'),
     },
-    ({ zone, ttl }) =>
+    ({ zone: zoneRef, ttl: ttlSeconds }) =>
       run(async () =>
         jsonResult(
           await api.post(
-            `/zones/${encodeURIComponent(zone)}/actions/change_ttl`,
-            { ttl }
+            `/zones/${encodeURIComponent(zoneRef)}/actions/change_ttl`,
+            { ttl: ttlSeconds }
           )
         )
       )
@@ -443,18 +452,18 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         .catchall(z.unknown())
         .meta({ additionalProperties: true }),
     },
-    ({ zone, delete: deleteProtection, confirm_token }, mcp) =>
+    ({ zone: zoneRef, delete: deleteProtection, confirm_token }, mcp) =>
       run(async () => {
         // Enabling protection is safe; removing it is the first half of a
         // deletion and gets the same gate.
         if (!deleteProtection) {
-          const resource = `change_zone_protection:${zone}`;
+          const resource = `change_zone_protection:${zoneRef}`;
           const outcome = await approval.requestApproval(
             server,
             mcp,
             confirmations,
             {
-              what: `remove the delete protection of zone "${zone}"`,
+              what: `remove the delete protection of zone "${zoneRef}"`,
               consequence: 'Doing so makes the zone deletable.',
               resourceKey: resource,
               token: confirm_token,
@@ -475,7 +484,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         }
         return jsonResult(
           await api.post(
-            `/zones/${encodeURIComponent(zone)}/actions/change_protection`,
+            `/zones/${encodeURIComponent(zoneRef)}/actions/change_protection`,
             { delete: deleteProtection }
           )
         );
@@ -506,15 +515,15 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         .catchall(z.unknown())
         .meta({ additionalProperties: true }),
     },
-    ({ zone, primary_nameservers, confirm_token }, mcp) =>
+    ({ zone: zoneRef, primary_nameservers, confirm_token }, mcp) =>
       run(async () => {
-        const resource = `change_primary_nameservers:${zone}:${fingerprint(primary_nameservers)}`;
+        const resource = `change_primary_nameservers:${zoneRef}:${fingerprint(primary_nameservers)}`;
         const outcome = await approval.requestApproval(
           server,
           mcp,
           confirmations,
           {
-            what: `change the primary nameservers of zone "${zone}"`,
+            what: `change the primary nameservers of zone "${zoneRef}"`,
             consequence: `The entire zone content will be transferred from the ${primary_nameservers.length} new primaries, replacing what is served today. Use get_zone to review the current primaries.`,
             details: nameserverDetails(primary_nameservers),
             resourceKey: resource,
@@ -536,7 +545,7 @@ export function registerZoneTools(server: McpServer, ctx: ToolContext): void {
         if (outcome.decision === 'pending') return outcome.result;
         return jsonResult(
           await api.post(
-            `/zones/${encodeURIComponent(zone)}/actions/change_primary_nameservers`,
+            `/zones/${encodeURIComponent(zoneRef)}/actions/change_primary_nameservers`,
             { primary_nameservers }
           )
         );

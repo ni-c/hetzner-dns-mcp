@@ -175,8 +175,8 @@ describe('tool registration', () => {
     stubFetch(() => jsonResponse({}));
     const client = await connectClient();
     const { tools } = await client.listTools();
-    const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual([...ALL_TOOLS].sort());
+    const names = tools.map((t) => t.name).toSorted();
+    expect(names).toEqual(ALL_TOOLS.toSorted());
     expect(names).toHaveLength(22);
   });
 
@@ -302,7 +302,7 @@ describe('read-only mode', () => {
     stubFetch(() => jsonResponse({}));
     const client = await connectClient(readOnly);
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual([...READ_TOOLS].sort());
+    expect(tools.map((t) => t.name).toSorted()).toEqual(READ_TOOLS.toSorted());
     expect(tools).toHaveLength(7);
     expect(tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
   });

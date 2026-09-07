@@ -30,12 +30,14 @@ export function registerActionTools(
       annotations: READ_ONLY,
       outputSchema: listOf('actions'),
     },
-    ({ zone, status, page, per_page }) =>
+    ({ zone: zoneRef, status, page: pageNumber, per_page }) =>
       run(async () => {
-        const path = zone
-          ? `/zones/${encodeURIComponent(zone)}/actions`
+        const path = zoneRef
+          ? `/zones/${encodeURIComponent(zoneRef)}/actions`
           : '/zones/actions';
-        return jsonResult(await api.get(path, { status, page, per_page }));
+        return jsonResult(
+          await api.get(path, { status, page: pageNumber, per_page })
+        );
       })
   );
 
