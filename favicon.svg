@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="hetzner-dns-mcp">
+  <rect width="32" height="32" rx="7" fill="#4f46e5" />
+  <!-- A zone as a root node resolving into three record sets. -->
+  <circle cx="16" cy="8" r="3.2" fill="#ffffff" />
+  <path d="M16 11.2 v4 M7 21 v-2.4 a1.4 1.4 0 0 1 1.4-1.4 h15.2 A1.4 1.4 0 0 1 25 18.6 V21 M16 15.2 v5.8"
+        stroke="#ffffff" stroke-width="1.9" fill="none" stroke-linecap="round" />
+  <circle cx="7" cy="23.6" r="2.6" fill="#ffffff" />
+  <circle cx="16" cy="23.6" r="2.6" fill="#ffffff" />
+  <circle cx="25" cy="23.6" r="2.6" fill="#ffffff" />
+</svg>
