@@ -4,7 +4,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ni-c/hetzner-dns-mcp/ci.yml?branch=main&label=CI)](https://github.com/ni-c/hetzner-dns-mcp/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ni-c/hetzner-dns-mcp/badge)](https://scorecard.dev/viewer/?uri=github.com/ni-c/hetzner-dns-mcp)
-<a href="https://socket.dev/npm/package/hetzner-dns-mcp"><img src="https://socket.dev/api/badge/npm/package/hetzner-dns-mcp" alt="Socket supply-chain report" height="20"></a>
+[![Socket Badge](https://badge.socket.dev/npm/package/hetzner-dns-mcp)](https://socket.dev/npm/package/hetzner-dns-mcp)
 [![Glama score](https://glama.ai/mcp/servers/ni-c/hetzner-dns-mcp/badges/score.svg)](https://glama.ai/mcp/servers/ni-c/hetzner-dns-mcp)
 <br>
 [![npm version](https://img.shields.io/npm/v/hetzner-dns-mcp)](https://www.npmjs.com/package/hetzner-dns-mcp)
