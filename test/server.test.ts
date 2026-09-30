@@ -462,12 +462,12 @@ describe('create_rrset', () => {
   });
 });
 
-describe('asking the user', () => {
-  const zoneRoutes = (_url: string, init?: RequestInit) =>
-    init?.method === 'DELETE'
-      ? jsonResponse({ action: { id: 7, status: 'running' } }, 201)
-      : jsonResponse({ zone: { id: 1, record_count: 12 } });
+const zoneRoutes = (_url: string, init?: RequestInit) =>
+  init?.method === 'DELETE'
+    ? jsonResponse({ action: { id: 7, status: 'running' } }, 201)
+    : jsonResponse({ zone: { id: 1, record_count: 12 } });
 
+describe('asking the user', () => {
   it('asks, and deletes the zone once they accept', async () => {
     // The point of the approval path: a client that can put a question in front
     // of a person gets asked, instead of a token that only proves the same call
@@ -524,22 +524,22 @@ describe('asking the user', () => {
   });
 });
 
+const guardedRoutes = () =>
+  jsonResponse({
+    zone: { id: 1, record_count: 3 },
+    rrset: {
+      name: 'www',
+      type: 'A',
+      ttl: 300,
+      records: [{ value: '1.2.3.4' }],
+    },
+    action: { id: 7, status: 'running' },
+  });
+
 describe('declining, on every guarded tool', () => {
   // One accept case is enough to prove the path works; a decline case per tool
   // is what proves each of them *acts on* the answer rather than falling
   // through. They differ only in arguments, so they are written as a table.
-  const routes = () =>
-    jsonResponse({
-      zone: { id: 1, record_count: 3 },
-      rrset: {
-        name: 'www',
-        type: 'A',
-        ttl: 300,
-        records: [{ value: '1.2.3.4' }],
-      },
-      action: { id: 7, status: 'running' },
-    });
-
   it.each([
     ['import_zonefile', { zone: 'example.com', zonefile: '@ IN A 1.2.3.4' }],
     [
@@ -595,7 +595,7 @@ describe('declining, on every guarded tool', () => {
       },
     ],
   ])('%s does nothing when the user declines', async (name, args) => {
-    const calls = stubFetch(routes);
+    const calls = stubFetch(guardedRoutes);
     const client = await connectClient(config, 'decline');
     const result = (await client.callTool({
       name,
@@ -1421,19 +1421,19 @@ describe('error handling', () => {
   });
 });
 
+const stubWrites = (): FetchCall[] =>
+  stubFetch((_url, init) =>
+    init?.method === 'GET'
+      ? jsonResponse({ rrset: { records: [], ttl: 300 } })
+      : jsonResponse({ action: {} }, 201)
+  );
+
 describe('what the gate is drawn around', () => {
   // The gate used to be drawn around loss — "eight of the 22 tools can take a
   // name off the internet, and DNS has no undo". That is the right question for
   // a file and the wrong one for a zone: the dangerous act in DNS is making a
   // claim, not withdrawing one, and none of the cases below removes anything.
   const zone = 'example.com';
-  const write = (): FetchCall[] =>
-    stubFetch((_url, init) =>
-      init?.method === 'GET'
-        ? jsonResponse({ rrset: { records: [], ttl: 300 } })
-        : jsonResponse({ action: {} }, 201)
-    );
-
   const authorityCases = [
     // Senders try MX in ascending preference, so a 0 beside the real 10 wins
     // all mail while leaving it in place.
@@ -1452,7 +1452,7 @@ describe('what the gate is drawn around', () => {
   it.each(authorityCases)(
     'confirms create_rrset for $name/$type',
     async ({ name, type, value }) => {
-      const calls = write();
+      const calls = stubWrites();
       const client = await connectClient();
       const result = (await client.callTool({
         name: 'create_rrset',
@@ -1467,7 +1467,7 @@ describe('what the gate is drawn around', () => {
   it.each(authorityCases)(
     'confirms add_records for $name/$type',
     async ({ name, type, value }) => {
-      const calls = write();
+      const calls = stubWrites();
       const client = await connectClient();
       const result = (await client.callTool({
         name: 'add_records',
@@ -1489,7 +1489,7 @@ describe('what the gate is drawn around', () => {
   ])(
     'lets $name/$type through without asking',
     async ({ name, type, value }) => {
-      const calls = write();
+      const calls = stubWrites();
       const client = await connectClient();
       const result = (await client.callTool({
         name: 'add_records',
@@ -1503,7 +1503,7 @@ describe('what the gate is drawn around', () => {
   );
 
   it('acts once the confirmation comes back', async () => {
-    const calls = write();
+    const calls = stubWrites();
     const client = await connectClient();
     const args = {
       zone,
@@ -1525,7 +1525,7 @@ describe('what the gate is drawn around', () => {
   });
 
   it('binds the confirmation to the record values, not just the name', async () => {
-    write();
+    stubWrites();
     const client = await connectClient();
     const base = { zone, name: 'mail', type: 'MX' };
     const asked = (await client.callTool({
