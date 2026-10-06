@@ -77,11 +77,12 @@ function sanitize(
  * would differ in exactly the fields this server redacts, and the
  * machine-readable one would be the unredacted half.
  *
- * The rebuild goes through `Object.fromEntries` rather than `out[name] = …`.
- * `JSON.parse` produces `__proto__` as an ordinary own property — a label key
- * a caller can set, or anything a proxy sends — and assigning that name to a
- * fresh object literal runs the prototype setter instead: the field vanishes
- * from the answer and the copy's prototype is replaced, with no error anywhere.
+ * A `__proto__` key is dropped, at every depth. `JSON.parse` produces it as an
+ * ordinary own property — a label key a caller can set, or anything a proxy
+ * sends — and kept, it reached the text block but not `structuredContent`: a
+ * client parses that against the output schema, and zod assigns fields, which
+ * on that name sets a prototype instead. The two channels then disagreed about
+ * the same answer.
  */
 function clean(
   value: unknown,
@@ -93,10 +94,9 @@ function clean(
   if (Array.isArray(value)) return value.map((entry) => clean(entry, keepLong));
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
-      Object.entries(value).map(([name, entry]) => [
-        name,
-        clean(entry, keepLong, name),
-      ])
+      Object.entries(value)
+        .filter(([name]) => name !== '__proto__')
+        .map(([name, entry]) => [name, clean(entry, keepLong, name)])
     );
   }
   return value;
