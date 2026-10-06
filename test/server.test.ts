@@ -5,6 +5,7 @@ import type { CallToolResult } from '@modelcontextprotocol/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Config } from '../src/config.js';
+import { jsonResult } from '../src/result.js';
 import { rrsetPath } from '../src/schema.js';
 import { createServer } from '../src/server.js';
 import { ALL_TOOLS, READ_TOOLS } from '../src/tools/catalogue.js';
@@ -354,6 +355,65 @@ describe('without a token', () => {
     expect(result.isError).toBe(true);
     expect(resultText(result)).toContain('HETZNER_API_TOKEN');
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('a __proto__ key from the API', () => {
+  it('is dropped, and both channels answer the same', async () => {
+    // Written as JSON text: an object literal would set a prototype instead.
+    const body =
+      '{"__proto__": {"polluted": true}, "meta": {}, "zones": [{"id": "1", "name": "example.com", ' +
+      '"__proto__": null, "labels": {"__proto__": "x", "env": "dev", "__pro\\u0000to__": "y"}}]}';
+    stubFetch(
+      () =>
+        new Response(body, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    const client = await connectClient();
+    const result = (await client.callTool({
+      name: 'list_zones',
+      arguments: {},
+    })) as CallToolResult;
+
+    expect(resultText(result)).not.toContain('"__proto__"');
+    expect(JSON.stringify(result.structuredContent)).not.toContain(
+      '"__proto__"'
+    );
+    // payload() asserts that structuredContent equals the parsed text.
+    const answer = payload(result) as {
+      zones: { labels: Record<string, string> }[];
+    };
+    expect(answer.zones[0]?.labels).toEqual({
+      env: 'dev',
+      '__pro\u0000to__': 'y',
+    });
+    expect(Object.hasOwn(answer, '__proto__')).toBe(false);
+    expect(Object.getPrototypeOf(answer)).toBe(Object.prototype);
+  });
+
+  it('is dropped at every depth and nothing else', () => {
+    const parsed = JSON.parse(
+      '{"__proto__": {"polluted": true}, "a": 1, "list": [{"__proto__": 1, "b": 2}],' +
+        ' "deep": {"x": {"__proto__": null, "c": 3}}, "n": {"__proto__": null}}'
+    ) as unknown;
+    const value = jsonResult(parsed).structuredContent as Record<
+      string,
+      unknown
+    >;
+    const { untrusted, source, ...rest } = value;
+    expect(untrusted).toBe(true);
+    expect(source).toBe('hetzner-cloud-api');
+    expect(rest).toEqual({
+      a: 1,
+      list: [{ b: 2 }],
+      deep: { x: { c: 3 } },
+      n: {},
+    });
+    expect(Object.hasOwn(value, '__proto__')).toBe(false);
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });
 
