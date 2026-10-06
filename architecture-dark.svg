@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  GENERATED FILE — do not edit by hand.
+  Source: docs/assets/architecture.source.svg
+  Regenerate with: npm run assets
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 260" width="760" height="260" role="img" aria-labelledby="arch-title arch-desc">
+  <title id="arch-title">Architecture of hetzner-dns-mcp</title>
+  <desc id="arch-desc">An MCP client speaks JSON-RPC over stdio to hetzner-dns-mcp, which validates arguments, puts destructive calls to a person first, and calls the Hetzner Cloud API over HTTPS. Responses pass back through a sanitizer.</desc>
+
+  <style>
+    .node { stroke-width: 1.25; }
+    .node-accent { stroke-width: 1.5; }
+    .edge { stroke-width: 1.5; fill: none; }
+    .edge-accent { stroke-width: 1.75; fill: none; }
+    .edge-dashed { stroke-dasharray: 5 4; }
+    text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "DejaVu Sans", sans-serif; font-size: 13px; }
+    .label-title { font-size: 13.5px; font-weight: 600; }
+    .label-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 12px; }
+    .label-muted { font-size: 11.5px; }
+
+    .node { fill: rgba(148, 163, 184, 0.10); stroke: #64748b; }
+    .node-accent { fill: rgba(129, 140, 248, 0.16); stroke: #a5b4fc; }
+    .edge { stroke: #64748b; }
+    .edge-accent { stroke: #a5b4fc; }
+    text { fill: #e2e8f0; }
+    .label-muted { fill: #94a3b8; }
+    marker path { fill: #64748b; stroke: none; }
+    marker.accent path { fill: #a5b4fc; }
+  </style>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" />
+    </marker>
+    <marker id="arrow-accent" class="accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" />
+    </marker>
+  </defs>
+
+  <rect class="node" x="12" y="76" width="150" height="86" rx="10" />
+  <text x="87" y="108" text-anchor="middle" class="label-title">MCP client</text>
+  <text x="87" y="128" text-anchor="middle" class="label-muted">Claude Code, Desktop,</text>
+  <text x="87" y="144" text-anchor="middle" class="label-muted">Codex, Inspector</text>
+
+  <rect class="node-accent" x="246" y="34" width="270" height="192" rx="12" />
+  <text x="381" y="62" text-anchor="middle" class="label-title">hetzner-dns-mcp</text>
+
+  <rect class="node" x="266" y="78" width="230" height="34" rx="8" />
+  <text x="381" y="99" text-anchor="middle" class="label-mono">zod schemas · path guards</text>
+
+  <rect class="node" x="266" y="122" width="230" height="34" rx="8" />
+  <text x="381" y="143" text-anchor="middle" class="label-mono">asks a person</text>
+
+  <rect class="node" x="266" y="166" width="230" height="34" rx="8" />
+  <text x="381" y="187" text-anchor="middle" class="label-mono">redact · truncate · mark</text>
+
+  <rect class="node" x="600" y="76" width="148" height="86" rx="10" />
+  <text x="674" y="108" text-anchor="middle" class="label-title">Hetzner Cloud</text>
+  <text x="674" y="128" text-anchor="middle" class="label-muted">api.hetzner.cloud</text>
+  <text x="674" y="144" text-anchor="middle" class="label-muted">/v1/zones</text>
+
+  <path class="edge-accent" d="M 166 108 L 242 108" marker-end="url(#arrow-accent)" />
+  <text x="204" y="98" text-anchor="middle" class="label-muted">stdio</text>
+
+  <path class="edge edge-dashed" d="M 242 138 L 166 138" marker-end="url(#arrow)" />
+  <text x="204" y="156" text-anchor="middle" class="label-muted">results</text>
+
+  <path class="edge-accent" d="M 520 108 L 596 108" marker-end="url(#arrow-accent)" />
+  <text x="558" y="98" text-anchor="middle" class="label-muted">HTTPS</text>
+
+  <path class="edge edge-dashed" d="M 596 138 L 520 138" marker-end="url(#arrow)" />
+  <text x="558" y="156" text-anchor="middle" class="label-muted">JSON</text>
+</svg>
