@@ -4,5 +4,5 @@
     "MCP server for Hetzner DNS — manage zones and records",
     "through the Hetzner Cloud API, with a gate on every delete."
   ],
-  "badges": ["22 tools", "MIT", "Node ≥22"]
+  "badges": ["22 tools", "MIT"]
 }
