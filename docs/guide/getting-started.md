@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- **Node.js ≥ 22** (or Docker, if you prefer the container)
+- **Node.js ≥ 24** (or Docker, if you prefer the container)
 - A **Hetzner Cloud API token** for the project that holds your DNS zones
 
 ## 1. Create the API token

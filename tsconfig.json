@@ -4,7 +4,7 @@
     // server goes through: a slice can split a surrogate pair, and a lone
     // surrogate is legal JSON that a client encoding to UTF-8 cannot represent.
     // Raising `target` rather than setting `lib` on purpose — setting `lib`
-    // drops the defaults with it, and Node 22 is the floor here anyway.
+    // drops the defaults with it, and Node 24 is the floor here anyway.
     "target": "ES2024",
     "module": "Node16",
     "moduleResolution": "Node16",

@@ -66,7 +66,7 @@ a token, so "the tools are there" is not evidence that the token arrived.
 ## The tools do not show up at all
 
 The client could not start the command. Check its MCP log. Common causes: no
-Node ≥ 22 on `PATH`, `npx` blocked by a corporate proxy, or a typo in the
+Node ≥ 24 on `PATH`, `npx` blocked by a corporate proxy, or a typo in the
 command. Try running the same command by hand — it should print a line to
 stderr and then wait silently for JSON-RPC on stdin.
 

@@ -68,7 +68,7 @@ in a previous tool result — so nothing hidden inside a DNS record can mint it.
 
 ## Requirements
 
-- Node.js ≥ 22
+- Node.js ≥ 24
 - A Hetzner Cloud API token for the project that holds your DNS zones — create one in the [Hetzner Cloud Console](https://console.hetzner.com) under _your project → Security → API tokens_. Use a **read & write** token for full functionality (a read-only token limits you to the read tools).
 
 ## Configuration
